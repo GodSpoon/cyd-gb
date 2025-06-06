@@ -208,16 +208,16 @@ static inline int scan_sprites(struct sprite *s, int line, int size)
 	int i, c = 0;
 	for(i = 0; i<40; i++)
 	{
-		int y, offs = i * 4;
+	int y, offs = i * 4;
 	
-		y = mem[0xFE00 + offs++] - 16;
-		if(line < y || line >= y + 8+(size*8))
-			continue;
-	
-		s[c].y     = y;
-		s[c].x     = mem[0xFE00 + offs++]-8;
-		s[c].tile  = mem[0xFE00 + offs++];
-		s[c].flags = mem[0xFE00 + offs++];
+	y = mem_get_byte(0xFE00 + offs++) - 16;
+	if(line < y || line >= y + 8+(size*8))
+		continue;
+
+	s[c].y     = y;
+	s[c].x     = mem_get_byte(0xFE00 + offs++)-8;
+	s[c].tile  = mem_get_byte(0xFE00 + offs++);
+	s[c].flags = mem_get_byte(0xFE00 + offs++);
 		c++;
 	
 		if(c == 10)
@@ -260,16 +260,16 @@ static void draw_bg_and_window(fbuffer_t *b, int line, struct LCDC& lcdc)
 		 * Then multiply the row number by the width of a row, 32, to find the offset.
 		 * Finally, add x/(256/32) to find the offset within that row. 
 		 */
-		map_offset = (ym/8)*32 + xm/8;
+	map_offset = (ym/8)*32 + xm/8;
 
-		tile_num = mem[0x9800 + map_select*0x400 + map_offset];
-		if(lcdc.bg_tiledata_select)
-			tile_addr = 0x8000 + tile_num*16;
-		else
-			tile_addr = 0x9000 + ((signed char)tile_num)*16;
+	tile_num = mem_get_byte(0x9800 + map_select*0x400 + map_offset);
+	if(lcdc.bg_tiledata_select)
+		tile_addr = 0x8000 + tile_num*16;
+	else
+		tile_addr = 0x9000 + ((signed char)tile_num)*16;
 
-		b1 = mem[tile_addr+(ym&7)*2];
-		b2 = mem[tile_addr+(ym&7)*2+1];
+	b1 = mem_get_byte(tile_addr+(ym&7)*2);
+	b2 = mem_get_byte(tile_addr+(ym&7)*2+1);
 		mask = 128>>(xm&7);
 		colour = (!!(b2&mask)<<1) | !!(b1&mask);
 		
@@ -293,9 +293,9 @@ static void draw_sprites(fbuffer_t *b, int line, int nsprites, struct sprite *s,
 		/* Address of the tile data for this sprite line */
 		tile_addr = 0x8000 + (s[i].tile*16) + sprite_line*2;
 
-		/* The two bytes of data holding the palette entries */
-		b1 = mem[tile_addr];
-		b2 = mem[tile_addr+1];
+	/* The two bytes of data holding the palette entries */
+	b1 = mem_get_byte(tile_addr);
+	b2 = mem_get_byte(tile_addr+1);
 
 		/* For each pixel in the line, draw it */
 		offset = s[i].x + line * 160;
@@ -331,6 +331,12 @@ static void render_line(void *arg)
 {
 	struct LCDC cline;
 	fbuffer_t* b = jolteon_get_framebuffer();
+	
+	// Add debug check for null framebuffer
+	if (!b) {
+		Serial.println("ERROR: Null framebuffer in render_line!");
+		return;
+	}
 	
 	while(true) {
 		if(!xQueueReceive(lcdqueue, &cline, portMAX_DELAY))

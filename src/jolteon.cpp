@@ -201,6 +201,7 @@ void jolteon_faint(const char* msg)
 
 fbuffer_t* jolteon_get_framebuffer(void)
 {
+    Serial.printf("jolteon_get_framebuffer: returning pixels=%p\n", pixels);
     return pixels;
 }
 

@@ -23,7 +23,8 @@
 			"ranges": "cpp",
 			"span": "cpp",
 			"text_encoding": "cpp",
-			"valarray": "cpp"
+			"valarray": "cpp",
+			"random": "cpp"
 		},
 		"terminal.integrated.env.windows": {
 			"PATH": ""

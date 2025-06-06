@@ -32,7 +32,10 @@ void setup() {
     
     // Initialize backlight (pin 21)
     pinMode(21, OUTPUT);
-    analogWrite(21, 204); // ~80% brightness (0-255 range)
+    // ESP32 does not support analogWrite; use ledc functions instead
+    ledcAttachPin(21, 1); // Channel 1
+    ledcSetup(1, 5000, 8); // 5 kHz PWM, 8-bit resolution
+    ledcWrite(1, 204); // ~80% brightness (0-255 range)
     Serial.println("Backlight set to 80%");
     
     // Initialize touch
