@@ -7,14 +7,17 @@
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 #include <TFT_eSPI.h>
+#include <XPT2046_Touchscreen.h>
 #include "jolteon.h"
 #include "interrupt.h"
 #include "mbc.h"
 #include "rom.h"
 #include "pokemon_red_rom.h"
+#include "jolteon_splash.h"
 
-// External reference to TFT display object from main.cpp
+// External reference to TFT display and touch objects from main.cpp
 extern TFT_eSPI tft;
+extern XPT2046_Touchscreen touch;
 
 #define GAMEBOY_WIDTH 160
 #define GAMEBOY_HEIGHT 144
@@ -116,6 +119,19 @@ void jolteon_init(void)
         return;
     }
     
+    // Verify framebuffer allocation and add test pattern
+    Serial.printf("Framebuffer test: writing test pattern...\n");
+    if (pixels) {
+        Serial.printf("Framebuffer allocated successfully at: %p\n", pixels);
+        // Fill with a test pattern to verify display output
+        for (int i = 0; i < GAMEBOY_WIDTH * GAMEBOY_HEIGHT; i++) {
+            pixels[i] = palette[i % 4]; // Test pattern using palette colors
+        }
+        Serial.println("Test pattern written to framebuffer");
+    } else {
+        Serial.println("ERROR: Framebuffer is NULL after allocation!");
+    }
+    
     // Set up default Game Boy green palette
     Serial.println("Setting up Game Boy palette...");
     const uint32_t pal[] = {0xEFFFDE, 0xADD794, 0x525F73, 0x183442};
@@ -177,10 +193,55 @@ float jolteon_get_fps() {
 
 void jolteon_update(void)
 {
-    // Simple touch handling - for now just keep buttons released
-    // TODO: Implement proper touch screen virtual buttons
+    // Default to all buttons released (Game Boy uses inverted logic - 1 = released, 0 = pressed)
     btn_directions = 0xFF;
     btn_faces = 0xFF;
+    
+    // Check for touch input
+    if (touch.touched()) {
+        TS_Point p = touch.getPoint();
+        
+        // Convert touch coordinates (touchscreen coordinates need to be mapped to display coordinates)
+        // CYD touchscreen typically needs coordinate mapping
+        int16_t x = map(p.x, 200, 3700, 0, 320);  // Approximate mapping - may need calibration
+        int16_t y = map(p.y, 240, 3800, 0, 240);  // Approximate mapping - may need calibration
+        
+        // Define virtual button areas (simple layout)
+        // D-pad on left side
+        if (x < 80) {
+            if (y < 80) {
+                // Up-Left area - treat as UP
+                btn_directions &= ~0x04; // UP pressed
+            } else if (y > 160) {
+                // Down-Left area - treat as DOWN  
+                btn_directions &= ~0x08; // DOWN pressed
+            } else {
+                // Middle-Left area - treat as LEFT
+                btn_directions &= ~0x02; // LEFT pressed
+            }
+        } 
+        // Right side for action buttons and right direction
+        else if (x > 240) {
+            if (y < 80) {
+                // Up-Right area - treat as UP or B button
+                btn_faces &= ~0x02; // B pressed
+            } else if (y > 160) {
+                // Down-Right area - treat as A button
+                btn_faces &= ~0x01; // A pressed
+            } else {
+                // Middle-Right area - treat as RIGHT
+                btn_directions &= ~0x01; // RIGHT pressed
+            }
+        }
+        // Center area for START/SELECT
+        else if (x > 120 && x < 200) {
+            if (y < 120) {
+                btn_faces &= ~0x08; // SELECT pressed
+            } else {
+                btn_faces &= ~0x04; // START pressed
+            }
+        }
+    }
 }
 
 void jolteon_faint(const char* msg)
@@ -236,9 +297,14 @@ void jolteon_end_frame(void)
         spi_lock = 0;
     }
     
-    // TODO: Convert framebuffer to display using smartdisplay
-    // For each pixel in framebuffer, draw to LCD if needed
-    // smartdisplay_lcd_draw_bitmap(...)
+    // Convert framebuffer to display
+    if (pixels) {
+        // Set drawing window to center the Game Boy screen on the CYD display
+        tft.setAddrWindow(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
+        
+        // Push the framebuffer data to the display
+        tft.pushColors(pixels, GAMEBOY_WIDTH * GAMEBOY_HEIGHT);
+    }
     
     // End frame timing for performance monitoring
     jolteon_end_frame_timing();
@@ -271,4 +337,48 @@ const uint8_t* jolteon_load_rom(const char* path)
     // Return the compiled-in Pokemon Red ROM
     Serial.println("Loading Pokemon Red ROM...");
     return src_roms_Pokemon___Red_Version_gb;
+}
+
+void jolteon_display_splash_screen(void)
+{
+    Serial.println("Displaying Jolteon splash screen...");
+    
+    // The splash image is 240x320 (portrait), but CYD is 320x240 (landscape)
+    // We need to rotate the image 90 degrees or adjust the display
+    
+    // Clear screen first
+    tft.fillScreen(TFT_BLACK);
+    
+    // For now, let's display it rotated to fit the landscape orientation
+    // We'll draw it pixel by pixel, rotating 90 degrees clockwise
+    
+    Serial.println("Drawing splash screen (this may take a moment)...");
+    
+    // Draw the splash screen data
+    // Original image: 240 width x 320 height
+    // Rotated: 320 width x 240 height (fits landscape)
+    
+    for (int y = 0; y < JOLTEON_SPLASH_HEIGHT; y++) {
+        for (int x = 0; x < JOLTEON_SPLASH_WIDTH; x++) {
+            // Read pixel from PROGMEM
+            uint16_t pixel = pgm_read_word(&jolteon_splash_data[y * JOLTEON_SPLASH_WIDTH + x]);
+            
+            // Rotate 90 degrees clockwise: (x,y) -> (y, width-1-x)
+            int new_x = y;
+            int new_y = JOLTEON_SPLASH_WIDTH - 1 - x;
+            
+            // Draw the pixel
+            tft.drawPixel(new_x, new_y, pixel);
+        }
+        
+        // Print progress every 32 lines to avoid flooding serial
+        if (y % 32 == 0) {
+            Serial.printf("Drawing progress: %d/%d lines\n", y, JOLTEON_SPLASH_HEIGHT);
+        }
+    }
+    
+    Serial.println("Splash screen displayed!");
+    
+    // Show splash screen for 3 seconds
+    delay(3000);
 }

@@ -9,6 +9,7 @@
 #include "mem.h"
 #include "cpu.h"
 #include "lcd.h"
+#include "jolteon.h"
 #include "pokemon_red_rom.h"
 
 // Touch pin definitions (TFT pins are configured via build flags)
@@ -66,7 +67,10 @@ void setup() {
         while(1) delay(1000);
     }
     
-    // Initialize LCD
+    // Initialize Jolteon system (allocates framebuffer) - after MMU but before LCD
+    jolteon_init();
+    
+    // Initialize LCD AFTER Jolteon and MMU (needs both framebuffer and memory access)
     if (!lcd_init()) {
         Serial.println("lcd_init failed - emulator cannot start");
         while(1) delay(1000);
@@ -78,11 +82,19 @@ void setup() {
 }
 
 void loop() {
+    // Update input state first
+    jolteon_update();
+    
     // Run Game Boy emulator cycle
     uint32_t cycles = cpu_cycle();
     lcd_cycle(cycles);
     timer_cycle(cycles);
-    // TODO: Add ILI9341_t3_Menu update/refresh logic here
+    
+    // Add frame counter for debugging
+    static int frame_counter = 0;
+    if (++frame_counter % 60 == 0) {
+        Serial.printf("Game Boy running: Frame %d, Cycles: %u\n", frame_counter, cycles);
+    }
     
     // Print debug info every 10 seconds
     static unsigned long last_debug = 0;

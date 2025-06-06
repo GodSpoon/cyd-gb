@@ -32,4 +32,7 @@ float jolteon_get_fps(void);
 // Memory optimization functions
 void jolteon_optimize_memory_early(void);
 
+// Splash screen functions
+void jolteon_display_splash_screen(void);
+
 #endif
