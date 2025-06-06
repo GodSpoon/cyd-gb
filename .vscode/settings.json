@@ -1,0 +1,36 @@
+{
+    "files.associations": {
+        "*.h": "c",
+        "*.cpp": "cpp",
+        "array": "cpp",
+        "hash_map": "cpp",
+        "deque": "cpp",
+        "forward_list": "cpp",
+        "list": "cpp",
+        "string": "cpp",
+        "unordered_map": "cpp",
+        "unordered_set": "cpp",
+        "vector": "cpp",
+        "string_view": "cpp",
+        "format": "cpp",
+        "initializer_list": "cpp",
+        "ranges": "cpp",
+        "span": "cpp",
+        "text_encoding": "cpp",
+        "valarray": "cpp"
+    },
+    "C_Cpp.intelliSenseEngine": "default",
+    "idf.adapterTargetName": "esp32",
+    "idf.customExtraPaths": "",
+    "idf.customExtraVars": "",
+    "idf.openOcdConfigs": [
+        "interface/ftdi/esp32_devkitj_v1.cfg",
+        "target/esp32.cfg"
+    ],
+    "idf.portWin": "",
+    "idf.pythonBinPath": "",
+    "idf.toolsPath": "",
+    "terminal.integrated.env.windows": {
+        "PATH": ""
+    }
+}
