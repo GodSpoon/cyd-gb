@@ -15,10 +15,12 @@
 #include "rom.h"
 #include "pokemon_red_rom.h"
 #include "jolteon_splash_landscape.h"
+#include "core/framebuffer_manager.h"
 
 // External reference to TFT display and touch objects from main.cpp
 extern TFT_eSPI tft;
 extern XPT2046_Touchscreen touch;
+extern FramebufferManager framebuffer_manager;
 
 // Display manager instance
 static DisplayManager* display_mgr = nullptr;
@@ -82,23 +84,13 @@ void analyze_memory_fragmentation() {
 
 // Try smaller buffer allocation with fragmentation handling
 bool allocate_buffers_optimized() {
-    size_t fb_size = GAMEBOY_HEIGHT * GAMEBOY_WIDTH * sizeof(fbuffer_t);
-    
     Serial.println("\nTrying optimized memory allocation...");
-    
-    // Force garbage collection
-    Serial.println("Attempting heap defragmentation...");
-    
-    // Only allocate framebuffer
-    pixels = (fbuffer_t*)heap_caps_malloc(fb_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!pixels) {
-        pixels = (fbuffer_t*)malloc(fb_size);
-    }
-    if (!pixels) {
-        Serial.println("  Failed to allocate framebuffer");
+    if (!framebuffer_manager.init()) {
+        Serial.println("  Failed to allocate double framebuffers");
         return false;
     }
-    Serial.printf("  Framebuffer at: %p\n", pixels);
+    pixels = framebuffer_manager.get_back_buffer();
+    Serial.printf("  Framebuffer (back) at: %p\n", pixels);
     return true;
 }
 

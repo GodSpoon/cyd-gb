@@ -9,6 +9,10 @@
 #include "interrupt.h"
 #include "timer.h"
 #include "cpu.h"
+#include "core/framebuffer_manager.h"
+#include "jolteon.h"
+
+void analyze_memory_fragmentation();
 
 bool usebootrom = false;
 uint8_t *mem = nullptr;
@@ -168,12 +172,8 @@ bool mmu_init(const uint8_t* bootrom)
 	for (int i = 0; i < 4; i++) {
 		mem_segments[i] = (uint8_t*)calloc(1, 0x4000); // 16KB per segment
 		if (!mem_segments[i]) {
-			Serial.printf("mmu_init: Failed to allocate segment %d\n", i);
-			// Clean up previously allocated segments
-			for (int j = 0; j < i; j++) {
-				free(mem_segments[j]);
-				mem_segments[j] = nullptr;
-			}
+			Serial.printf("[ERROR] mmu_init: Failed to allocate segment %d\n", i);
+			analyze_memory_fragmentation(); // Log detailed memory fragmentation
 			return false;
 		}
 		Serial.printf("mmu_init: Segment %d allocated at %p\n", i, mem_segments[i]);
@@ -232,3 +232,5 @@ bool mmu_init(const uint8_t* bootrom)
 	Serial.println("mmu_init: Segmented MMU initialization successful!");
 	return true;
 }
+
+// Use framebuffer_manager.get_back_buffer() for direct framebuffer access

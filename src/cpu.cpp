@@ -2,6 +2,9 @@
 #include "mem.h"
 #include "interrupt.h"
 #include "jolteon.h"
+#include "core/framebuffer_manager.h"
+
+extern FramebufferManager framebuffer_manager;
 
 /* 16-bit mode */
 #define set_HL(x) do {uint32_t macro = (x); c.L = macro&0xFF; c.H = macro>>8;} while(0)

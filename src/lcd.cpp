@@ -7,6 +7,9 @@
 #include "interrupt.h"
 #include "jolteon.h"
 #include "mem.h"
+#include "core/framebuffer_manager.h"
+
+extern FramebufferManager framebuffer_manager;
 
 #define MODE2_BOUNDS 	(204/4)
 #define MODE3_BOUNDS 	(284/4)
@@ -330,11 +333,11 @@ static void draw_sprites(fbuffer_t *b, int line, int nsprites, struct sprite *s,
 static void render_line(void *arg)
 {
 	struct LCDC cline;
-	fbuffer_t* b = jolteon_get_framebuffer();
+	fbuffer_t* b = framebuffer_manager.get_back_buffer();
 	
 	// Add debug check for null framebuffer
 	if (!b) {
-		Serial.println("ERROR: Null framebuffer in render_line!");
+		Serial.println("[ERROR] Null framebuffer in render_line! Aborting rendering.");
 		return;
 	}
 	

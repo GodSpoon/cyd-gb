@@ -3,6 +3,7 @@
 #include "mbc.h"
 #include "rom.h"
 #include "jolteon.h"
+#include "core/framebuffer_manager.h"
 
 #define SET_ROM_BANK(n)		(rombank = &rom[((n) & (rom_banks - 1)) * 0x4000])
 #define SET_RAM_BANK(n)		(rambank = &ram[((n) & (ram_banks - 1)) * 0x2000])
@@ -23,6 +24,7 @@ MBCReader mbc_read_ram;
 MBCWriter mbc_write_rom;
 MBCWriter mbc_write_ram;
 
+extern FramebufferManager framebuffer_manager;
 
 bool mbc_init()
 {
@@ -82,7 +84,15 @@ bool mbc_init()
 		if (ram) {
 			Serial.printf("mbc_init: Using reduced RAM size: %d bytes instead of %d\n", min_size, alloc_size);
 			alloc_size = min_size;
+			// Update ram_banks to match reduced allocation
+			ram_banks = alloc_size / 0x2000; // Each RAM bank is 8KB (0x2000)
+			if (ram_banks == 0) ram_banks = 1; // At least 1 bank
 		}
+	}
+	// If we succeeded with a smaller allocation above, but not in the previous block, update ram_banks accordingly
+	else if (ram && alloc_size != ram_size) {
+		ram_banks = alloc_size / 0x2000;
+		if (ram_banks == 0) ram_banks = 1;
 	}
 	
 	if (!ram) {
@@ -95,6 +105,7 @@ bool mbc_init()
 		heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
 		Serial.printf("mbc_init: Memory analysis - Free blocks: %d, Total free: %d, Largest: %d\n", 
 			info.free_blocks, info.total_free_bytes, info.largest_free_block);
+		Serial.println("mbc_init: ERROR - Not enough memory for cartridge RAM. Try rebooting or closing other apps.");
 		return false;
 	}
 	
@@ -226,3 +237,5 @@ uint8_t MBC1_read_RAM(uint16_t i)
 {
 	return ram_enabled ? rambank[i - 0xA000] : 0xFF;
 }
+
+// Use framebuffer_manager.get_back_buffer() for direct framebuffer access

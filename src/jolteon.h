@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include "display_manager.h"
+#include "core/framebuffer_manager.h"
 
 extern volatile bool sram_modified;
 extern uint8_t btn_directions;
@@ -10,6 +11,8 @@ extern uint8_t btn_faces;
 
 typedef uint16_t fbuffer_t;
 extern uint16_t palette[];
+
+extern FramebufferManager framebuffer_manager;
 
 void jolteon_update(void);
 void jolteon_init(void);
