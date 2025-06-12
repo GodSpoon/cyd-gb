@@ -299,11 +299,80 @@ void jolteon_end_frame(void)
     
     // Convert framebuffer to display
     if (pixels) {
-        // Set drawing window to center the Game Boy screen on the CYD display
-        tft.setAddrWindow(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
+        // Debug: Check if framebuffer has valid data
+        static int debug_counter = 0;
+        debug_counter++;
         
-        // Push the framebuffer data to the display
-        tft.pushColors(pixels, GAMEBOY_WIDTH * GAMEBOY_HEIGHT);
+        if (debug_counter % 300 == 0) { // Debug every 5 seconds at 60fps
+            Serial.printf("Frame buffer check: first pixel = 0x%04X, last pixel = 0x%04X\n", 
+                         pixels[0], pixels[GAMEBOY_WIDTH * GAMEBOY_HEIGHT - 1]);
+            
+            // Check for actual variation in framebuffer
+            uint16_t min_val = 0xFFFF, max_val = 0;
+            for (int i = 0; i < GAMEBOY_WIDTH * GAMEBOY_HEIGHT; i += 100) {
+                if (pixels[i] < min_val) min_val = pixels[i];
+                if (pixels[i] > max_val) max_val = pixels[i];
+            }
+            Serial.printf("Framebuffer variation: min=0x%04X, max=0x%04X\n", min_val, max_val);
+        }
+        
+        // Clear the area around the Game Boy screen
+        tft.fillRect(CENTER_X - 2, CENTER_Y - 2, GAMEBOY_WIDTH + 4, GAMEBOY_HEIGHT + 4, TFT_BLACK);
+        
+        // Draw a border around the Game Boy screen
+        tft.drawRect(CENTER_X - 1, CENTER_Y - 1, GAMEBOY_WIDTH + 2, GAMEBOY_HEIGHT + 2, TFT_GREEN);
+        
+        // Try multiple rendering methods
+        static int render_method = 0;
+        static int method_counter = 0;
+        method_counter++;
+        
+        if (method_counter % 180 == 0) { // Switch methods every 3 seconds
+            render_method = (render_method + 1) % 3;
+            Serial.printf("Switching to render method %d\n", render_method);
+        }
+        
+        switch (render_method) {
+            case 0: // Method 1: pushColors
+                tft.setAddrWindow(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
+                tft.pushColors((uint16_t*)pixels, GAMEBOY_WIDTH * GAMEBOY_HEIGHT);
+                break;
+                
+            case 1: // Method 2: pushImage
+                tft.pushImage(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, (uint16_t*)pixels);
+                break;
+                
+            case 2: // Method 3: Pixel by pixel (slow but guaranteed to work)
+                if (debug_counter % 60 == 0) { // Only do this occasionally as it's slow
+                    for (int y = 0; y < GAMEBOY_HEIGHT; y += 2) { // Skip every other line for speed
+                        for (int x = 0; x < GAMEBOY_WIDTH; x += 2) { // Skip every other pixel for speed
+                            uint16_t pixel = pixels[y * GAMEBOY_WIDTH + x];
+                            tft.drawPixel(CENTER_X + x, CENTER_Y + y, pixel);
+                            // Also draw the skipped pixel to fill gaps
+                            if (x + 1 < GAMEBOY_WIDTH) {
+                                tft.drawPixel(CENTER_X + x + 1, CENTER_Y + y, pixel);
+                            }
+                            if (y + 1 < GAMEBOY_HEIGHT) {
+                                tft.drawPixel(CENTER_X + x, CENTER_Y + y + 1, pixel);
+                            }
+                        }
+                    }
+                }
+                break;
+        }
+        
+        // Test pattern overlay for debugging
+        if (debug_counter % 600 == 300) { // Every 10 seconds, show a test pattern briefly
+            Serial.println("Drawing test pattern overlay");
+            tft.fillRect(CENTER_X + 10, CENTER_Y + 10, 50, 30, TFT_RED);
+            tft.setTextColor(TFT_WHITE, TFT_RED);
+            tft.setTextSize(1);
+            tft.setCursor(CENTER_X + 15, CENTER_Y + 20);
+            tft.print("TEST");
+        }
+        
+    } else {
+        Serial.println("ERROR: pixels framebuffer is NULL in jolteon_end_frame()");
     }
     
     // End frame timing for performance monitoring
