@@ -2,10 +2,14 @@
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
 #include "menu.h"
+#include "touch_manager.h"
 
 // External references to display and touch from main.cpp
 extern TFT_eSPI tft;
 extern XPT2046_Touchscreen touch;
+
+// Touch manager instance
+static TouchManager* touch_mgr = nullptr;
 
 // Menu state
 static bool menu_initialized = false;
@@ -21,6 +25,9 @@ static const char* rom_path = "pokemon_red"; // Default ROM
 
 void menu_init() {
     Serial.println("Menu: Initializing...");
+    if (!touch_mgr) {
+        touch_mgr = new TouchManager(touch);
+    }
     
     // Clear screen
     tft.fillScreen(MENU_BG_COLOR);
@@ -62,47 +69,56 @@ void menu_init() {
 }
 
 menu_result_t menu_loop() {
+    if (!menu_initialized) {
+        menu_init();
+        return MENU_RESULT_CONTINUE;
+    }
     // Throttle updates
     if (millis() - last_update < 100) {
         return MENU_RESULT_CONTINUE;
     }
     last_update = millis();
-    
-    if (!menu_initialized) {
-        menu_init();
-        return MENU_RESULT_CONTINUE;
-    }
-    
-    // Check for touch input
-    if (touch.touched()) {
-        TS_Point p = touch.getPoint();
-        
-        // Simple touch handling - map touch Y to menu selection
-        if (p.y > 1000 && p.y < 2000) {
-            menu_selection = 0; // Start Game
-        } else if (p.y > 2000 && p.y < 3000) {
-            menu_selection = 1; // Settings
-        } else if (p.y > 3000 && p.y < 4000) {
-            menu_selection = 2; // About
+
+    // Static variables to track touch state and selection
+    static bool was_touching = false;
+    static int last_selection = -1;
+
+    TouchManager::TouchPoint tp = touch_mgr->get_touch();
+    bool touching = tp.valid;
+
+    // Determine which menu row is being touched
+    int touched_selection = -1;
+    if (touching) {
+        if (tp.y >= 120 && tp.y < 150) {
+            touched_selection = 0; // Start Game
+        } else if (tp.y >= 150 && tp.y < 180) {
+            touched_selection = 1; // Settings
+        } else if (tp.y >= 180 && tp.y < 210) {
+            touched_selection = 2; // About
         }
-        
-        // If touching the selected item, activate it
-        static unsigned long last_touch = 0;
-        if (millis() - last_touch > 500) { // Debounce
-            last_touch = millis();
-            
-            if (menu_selection == 0) {
-                Serial.println("Menu: Starting game selected!");
-                return MENU_RESULT_START_GAME;
-            } else {
-                Serial.printf("Menu: Option %d selected (not implemented yet)\n", menu_selection);
-            }
-        }
-        
-        // Redraw menu with new selection
-        menu_init();
     }
-    
+
+    // Update menu selection if touch is on a menu row
+    if (touched_selection != -1 && touched_selection != menu_selection) {
+        menu_selection = touched_selection;
+        menu_init(); // Redraw menu only if selection changed
+    }
+
+    // Detect tap (touch release) on the currently selected item
+    if (!touching && was_touching && last_selection == menu_selection && last_selection != -1) {
+        // Tap detected on highlighted item
+        if (menu_selection == 0) {
+            Serial.println("Menu: Starting game selected!");
+            return MENU_RESULT_START_GAME;
+        } else {
+            Serial.printf("Menu: Option %d selected (not implemented yet)\n", menu_selection);
+        }
+    }
+
+    // Update touch state trackers
+    was_touching = touching;
+    last_selection = touched_selection != -1 ? touched_selection : last_selection;
+
     return MENU_RESULT_CONTINUE;
 }
 
