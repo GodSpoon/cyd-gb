@@ -8,8 +8,6 @@ typedef enum {
 } menu_result_t;
 
 void menu_init();
-void draw_menu(); // Added for manual menu drawing
-void touch_calibration_test(); // Added for touch debugging
 menu_result_t menu_loop();
 const char* menu_get_rompath();
 

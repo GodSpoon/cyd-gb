@@ -2,6 +2,7 @@
 #define JOLTEON_H
 
 #include <Arduino.h>
+#include "display_manager.h"
 
 extern volatile bool sram_modified;
 extern uint8_t btn_directions;
@@ -34,5 +35,8 @@ void jolteon_optimize_memory_early(void);
 
 // Splash screen functions
 void jolteon_display_splash_screen(void);
+
+// Display testing functions
+void jolteon_display_test_pattern(void);
 
 #endif

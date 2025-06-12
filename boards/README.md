@@ -301,6 +301,56 @@ To produce "real" audio connect the internal 8 bits D2A converter in the ESP32. 
 The audio is a bit distorted. [HexeguitarDIY](https://github.com/hexeguitar/ESP32_LCD_PIO) has a fix for that by changing the resistor values to prevent distortion.
 [![HexeguitarDIY Audio mod](https://img.youtube.com/vi/6JCLHIXXVus/0.jpg)](https://www.youtube.com/watch?v=6JCLHIXXVus)
 
+## RGB565 Byte Order Best Practices
+
+When developing applications that use RGB565 pixel data for TFT displays with TFT_eSPI library, it's important to understand the byte order requirements:
+
+### TFT_eSPI RGB565 Format
+
+TFT_eSPI expects RGB565 data in **little-endian** format:
+- **Lower byte**: Contains the lower 8 bits of RGB565 value
+- **Higher byte**: Contains the upper 8 bits of RGB565 value
+
+### Common Issues
+
+When converting images to RGB565 format for embedded displays, the most common issue is incorrect byte order. Standard RGB565 conversion often produces **big-endian** format, which results in:
+- Color inversion or incorrect colors
+- Predominantly white/washed out images
+- Blue/red channel swapping
+
+### Solution
+
+When generating RGB565 data for TFT_eSPI displays, ensure byte swapping:
+
+```python
+def rgb888_to_rgb565_tft_espi(r, g, b):
+    """Convert RGB888 to RGB565 format compatible with TFT_eSPI"""
+    # Standard RGB565 conversion
+    rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+    
+    # TFT_eSPI expects RGB565 in little-endian format
+    # Swap bytes to match expected format
+    return ((rgb565 & 0x00FF) << 8) | ((rgb565 & 0xFF00) >> 8)
+```
+
+### Verification
+
+After converting image data:
+1. Check that pixel values are not predominantly `0xFFFF` (white)
+2. Verify color variety in the converted data
+3. Test display output for correct colors
+
+### Board-Specific Notes
+
+This byte order requirement applies to all CYD boards using:
+- ILI9341 displays (ESP32-2432S024*, ESP32-2432S028*)
+- ST7789 displays (ESP32-2432S022*, ESP32-2432S032*)
+- ST7796 displays (ESP32-3248S035*)
+
+For parallel interface displays (ST7262, ST7701), consult the specific driver documentation.
+
+---
+
 ## Appendix: Board details
 
 ### ESP32_1732S019 N/C
@@ -381,7 +431,7 @@ The touch controller is in fact a CST820 but this is upward compatible with the 
 - Speaker: JST1.25 2p
 - Battery interface JST 1.25 2p
 
-![ESP32-2432S032 back](assets/images/esp32-2432S032-back.jpeg)
+![ESP32-2432S032 back](assets/images/esp32-3248S032-back.jpeg)
 
 ### ESP32-3248S035 R/C
 

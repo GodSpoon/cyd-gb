@@ -9,15 +9,19 @@
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
 #include "jolteon.h"
+#include "display_manager.h"
 #include "interrupt.h"
 #include "mbc.h"
 #include "rom.h"
 #include "pokemon_red_rom.h"
-#include "jolteon_splash.h"
+#include "jolteon_splash_landscape.h"
 
 // External reference to TFT display and touch objects from main.cpp
 extern TFT_eSPI tft;
 extern XPT2046_Touchscreen touch;
+
+// Display manager instance
+static DisplayManager* display_mgr = nullptr;
 
 #define GAMEBOY_WIDTH 160
 #define GAMEBOY_HEIGHT 144
@@ -116,6 +120,14 @@ void jolteon_init(void)
     // Try optimized allocation strategy
     if (!allocate_buffers_optimized()) {
         jolteon_faint("Failed to allocate required buffers!");
+        return;
+    }
+    
+    // Initialize display manager EARLY - before framebuffer operations
+    Serial.println("Initializing DisplayManager...");
+    display_mgr = new DisplayManager(tft);
+    if (!display_mgr->init()) {
+        jolteon_faint("Display initialization failed");
         return;
     }
     
@@ -253,8 +265,21 @@ void jolteon_faint(const char* msg)
     Serial.printf("Largest free block: %d bytes\n", ESP.getMaxAllocHeap());
     Serial.printf("Min free heap: %d bytes\n", ESP.getMinFreeHeap());
     Serial.println("===============================");
-    // TODO: Draw error message on screen using smartdisplay
-    // smartdisplay_lcd_draw_text(..., "Jolteon fainted! ...");
+    
+    // Display error on screen using DisplayManager if available
+    if (display_mgr) {
+        display_mgr->display_error(msg);
+    } else {
+        // Fallback to direct TFT display
+        tft.fillScreen(TFT_RED);
+        tft.setTextColor(TFT_WHITE, TFT_RED);
+        tft.setTextSize(2);
+        tft.setCursor(20, 100);
+        tft.print("ERROR:");
+        tft.setCursor(20, 130);
+        tft.print(msg);
+    }
+    
     while(true) {
         delay(1000);
     }
@@ -277,19 +302,29 @@ void jolteon_clear_framebuffer(fbuffer_t col)
 
 void jolteon_clear_screen(uint16_t col)
 {
-    tft.fillScreen(col);
+    if (display_mgr) {
+        display_mgr->clear_screen();
+    } else {
+        tft.fillScreen(col);
+    }
 }
 
 void jolteon_set_palette(const uint32_t* col)
 {
-    /* RGB888 -> RGB565 */
+    /* RGB888 -> RGB565 - Fixed to use correct RGB565 format instead of BGR565 */
     for (int i = 0; i < 4; ++i) {
-        palette[i] = ((col[i]&0xFF)>>3)+((((col[i]>>8)&0xFF)>>2)<<5)+((((col[i]>>16)&0xFF)>>3)<<11);
+        uint8_t r = (col[i] >> 16) & 0xFF;  // Extract red from bits 23-16
+        uint8_t g = (col[i] >> 8) & 0xFF;   // Extract green from bits 15-8
+        uint8_t b = (col[i] >> 0) & 0xFF;   // Extract blue from bits 7-0
+        
+        // Convert to RGB565: RRRRR GGGGGG BBBBB
+        palette[i] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
     }
 }
 
 void jolteon_end_frame(void)
 {
+    // Handle SRAM save if requested
     if (spi_lock) {
         const s_rominfo* rominfo = rom_get_info();
         if (rominfo->has_battery && rom_get_ram_size())
@@ -297,82 +332,25 @@ void jolteon_end_frame(void)
         spi_lock = 0;
     }
     
-    // Convert framebuffer to display
-    if (pixels) {
-        // Debug: Check if framebuffer has valid data
+    // Render the framebuffer to the display using DisplayManager
+    if (display_mgr && pixels) {
+        display_mgr->render_gameboy_frame(pixels);
+        
+        // Optional: Display debug info periodically
         static int debug_counter = 0;
         debug_counter++;
         
-        if (debug_counter % 300 == 0) { // Debug every 5 seconds at 60fps
-            Serial.printf("Frame buffer check: first pixel = 0x%04X, last pixel = 0x%04X\n", 
-                         pixels[0], pixels[GAMEBOY_WIDTH * GAMEBOY_HEIGHT - 1]);
-            
-            // Check for actual variation in framebuffer
-            uint16_t min_val = 0xFFFF, max_val = 0;
-            for (int i = 0; i < GAMEBOY_WIDTH * GAMEBOY_HEIGHT; i += 100) {
-                if (pixels[i] < min_val) min_val = pixels[i];
-                if (pixels[i] > max_val) max_val = pixels[i];
-            }
-            Serial.printf("Framebuffer variation: min=0x%04X, max=0x%04X\n", min_val, max_val);
+        if (debug_counter % 180 == 0) { // Every 3 seconds at 60fps
+            display_mgr->display_debug_info(jolteon_get_fps(), ESP.getFreeHeap());
         }
-        
-        // Clear the area around the Game Boy screen
-        tft.fillRect(CENTER_X - 2, CENTER_Y - 2, GAMEBOY_WIDTH + 4, GAMEBOY_HEIGHT + 4, TFT_BLACK);
-        
-        // Draw a border around the Game Boy screen
-        tft.drawRect(CENTER_X - 1, CENTER_Y - 1, GAMEBOY_WIDTH + 2, GAMEBOY_HEIGHT + 2, TFT_GREEN);
-        
-        // Try multiple rendering methods
-        static int render_method = 0;
-        static int method_counter = 0;
-        method_counter++;
-        
-        if (method_counter % 180 == 0) { // Switch methods every 3 seconds
-            render_method = (render_method + 1) % 3;
-            Serial.printf("Switching to render method %d\n", render_method);
-        }
-        
-        switch (render_method) {
-            case 0: // Method 1: pushColors
-                tft.setAddrWindow(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
-                tft.pushColors((uint16_t*)pixels, GAMEBOY_WIDTH * GAMEBOY_HEIGHT);
-                break;
-                
-            case 1: // Method 2: pushImage
-                tft.pushImage(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, (uint16_t*)pixels);
-                break;
-                
-            case 2: // Method 3: Pixel by pixel (slow but guaranteed to work)
-                if (debug_counter % 60 == 0) { // Only do this occasionally as it's slow
-                    for (int y = 0; y < GAMEBOY_HEIGHT; y += 2) { // Skip every other line for speed
-                        for (int x = 0; x < GAMEBOY_WIDTH; x += 2) { // Skip every other pixel for speed
-                            uint16_t pixel = pixels[y * GAMEBOY_WIDTH + x];
-                            tft.drawPixel(CENTER_X + x, CENTER_Y + y, pixel);
-                            // Also draw the skipped pixel to fill gaps
-                            if (x + 1 < GAMEBOY_WIDTH) {
-                                tft.drawPixel(CENTER_X + x + 1, CENTER_Y + y, pixel);
-                            }
-                            if (y + 1 < GAMEBOY_HEIGHT) {
-                                tft.drawPixel(CENTER_X + x, CENTER_Y + y + 1, pixel);
-                            }
-                        }
-                    }
-                }
-                break;
-        }
-        
-        // Test pattern overlay for debugging
-        if (debug_counter % 600 == 300) { // Every 10 seconds, show a test pattern briefly
-            Serial.println("Drawing test pattern overlay");
-            tft.fillRect(CENTER_X + 10, CENTER_Y + 10, 50, 30, TFT_RED);
-            tft.setTextColor(TFT_WHITE, TFT_RED);
-            tft.setTextSize(1);
-            tft.setCursor(CENTER_X + 15, CENTER_Y + 20);
-            tft.print("TEST");
-        }
-        
     } else {
-        Serial.println("ERROR: pixels framebuffer is NULL in jolteon_end_frame()");
+        Serial.println("ERROR: DisplayManager or framebuffer is NULL in jolteon_end_frame()");
+        if (!display_mgr) {
+            Serial.println("  DisplayManager is NULL");
+        }
+        if (!pixels) {
+            Serial.println("  Framebuffer is NULL");
+        }
     }
     
     // End frame timing for performance monitoring
@@ -412,42 +390,98 @@ void jolteon_display_splash_screen(void)
 {
     Serial.println("Displaying Jolteon splash screen...");
     
-    // The splash image is 240x320 (portrait), but CYD is 320x240 (landscape)
-    // We need to rotate the image 90 degrees or adjust the display
-    
     // Clear screen first
     tft.fillScreen(TFT_BLACK);
     
-    // For now, let's display it rotated to fit the landscape orientation
-    // We'll draw it pixel by pixel, rotating 90 degrees clockwise
+    // Show initial loading message
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(85, 100);
+    tft.print("Loading...");
     
-    Serial.println("Drawing splash screen (this may take a moment)...");
+    // Draw loading bar background
+    const int bar_x = 60;
+    const int bar_y = 130;
+    const int bar_width = 200;
+    const int bar_height = 10;
     
-    // Draw the splash screen data
-    // Original image: 240 width x 320 height
-    // Rotated: 320 width x 240 height (fits landscape)
+    tft.drawRect(bar_x - 2, bar_y - 2, bar_width + 4, bar_height + 4, TFT_WHITE);
+    tft.fillRect(bar_x, bar_y, bar_width, bar_height, TFT_BLACK);
     
-    for (int y = 0; y < JOLTEON_SPLASH_HEIGHT; y++) {
-        for (int x = 0; x < JOLTEON_SPLASH_WIDTH; x++) {
-            // Read pixel from PROGMEM
-            uint16_t pixel = pgm_read_word(&jolteon_splash_data[y * JOLTEON_SPLASH_WIDTH + x]);
+    // Allocate buffer for the splash image (if we have enough memory)
+    uint16_t* image_buffer = nullptr;
+    const int total_pixels = JOLTEON_SPLASH_LANDSCAPE_WIDTH * JOLTEON_SPLASH_LANDSCAPE_HEIGHT;
+    const size_t buffer_size = total_pixels * sizeof(uint16_t);
+    
+    Serial.printf("Attempting to allocate %d bytes for splash buffer...\n", buffer_size);
+    
+    // Try to allocate buffer (prefer PSRAM if available)
+    image_buffer = (uint16_t*)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!image_buffer) {
+        image_buffer = (uint16_t*)malloc(buffer_size);
+    }
+    
+    if (image_buffer) {
+        Serial.println("Splash buffer allocated successfully - copying image data...");
+        
+        // Copy image data from PROGMEM to RAM with progress updates
+        const int progress_steps = 10;
+        const int pixels_per_step = total_pixels / progress_steps;
+        
+        for (int step = 0; step < progress_steps; step++) {
+            // Update loading bar
+            int progress_width = (bar_width * (step + 1)) / progress_steps;
+            tft.fillRect(bar_x, bar_y, progress_width, bar_height, TFT_GREEN);
             
-            // Rotate 90 degrees clockwise: (x,y) -> (y, width-1-x)
-            int new_x = y;
-            int new_y = JOLTEON_SPLASH_WIDTH - 1 - x;
+            // Copy a chunk of pixels
+            int start_pixel = step * pixels_per_step;
+            int end_pixel = (step == progress_steps - 1) ? total_pixels : (step + 1) * pixels_per_step;
             
-            // Draw the pixel
-            tft.drawPixel(new_x, new_y, pixel);
+            for (int i = start_pixel; i < end_pixel; i++) {
+                image_buffer[i] = pgm_read_word(&jolteon_splash_landscape_data[i]);
+            }
+            
+            // Small delay to show progress
+            delay(50);
         }
         
-        // Print progress every 32 lines to avoid flooding serial
-        if (y % 32 == 0) {
-            Serial.printf("Drawing progress: %d/%d lines\n", y, JOLTEON_SPLASH_HEIGHT);
-        }
+        // Clear the loading screen
+        tft.fillScreen(TFT_BLACK);
+        
+        Serial.println("Drawing buffered splash screen...");
+        
+        // Draw the entire image at once (no flicker)
+        tft.pushImage(0, 0, JOLTEON_SPLASH_LANDSCAPE_WIDTH, JOLTEON_SPLASH_LANDSCAPE_HEIGHT, image_buffer);
+        
+        // Free the buffer
+        free(image_buffer);
+        Serial.println("Splash buffer freed");
+        
+    } else {
+        Serial.println("Failed to allocate splash buffer - using direct PROGMEM rendering...");
+        
+        // Fallback: render directly from PROGMEM with progress
+        tft.fillRect(bar_x, bar_y, bar_width, bar_height, TFT_YELLOW);
+        delay(200);
+        
+        // Clear loading screen
+        tft.fillScreen(TFT_BLACK);
+        
+        // Use the original method as fallback
+        tft.pushImage(0, 0, JOLTEON_SPLASH_LANDSCAPE_WIDTH, JOLTEON_SPLASH_LANDSCAPE_HEIGHT, jolteon_splash_landscape_data);
     }
     
     Serial.println("Splash screen displayed!");
     
     // Show splash screen for 3 seconds
     delay(3000);
+}
+
+void jolteon_display_test_pattern(void)
+{
+    if (display_mgr) {
+        display_mgr->display_test_pattern();
+    } else {
+        Serial.println("DisplayManager not initialized - cannot show test pattern");
+    }
 }

@@ -15,13 +15,9 @@
 // Touch pin definitions (TFT pins are configured via build flags)
 #define TOUCH_CS  33
 #define TOUCH_IRQ 36
-#define TOUCH_MOSI 32
-#define TOUCH_MISO 39
-#define TOUCH_SCK  25
 
 // Display and touch objects
 TFT_eSPI tft = TFT_eSPI();
-SPIClass touchSPI = SPIClass(HSPI);
 XPT2046_Touchscreen touch(TOUCH_CS, TOUCH_IRQ);
 
 // Application state
@@ -55,25 +51,8 @@ void setup() {
     
     // Initialize touch
     Serial.println("Initializing XPT2046 touch...");
-    
-    // Initialize separate SPI for touch
-    touchSPI.begin(TOUCH_SCK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
-    touch.begin(touchSPI);
-    touch.setRotation(1); // Match display rotation
-    Serial.println("Touch initialized with separate SPI.");
-    
-    // Test touch immediately
-    Serial.println("Testing touch detection...");
-    for (int i = 0; i < 10; i++) {
-        if (touch.touched()) {
-            TS_Point p = touch.getPoint();
-            Serial.printf("Touch test %d: x=%d, y=%d\n", i, p.x, p.y);
-        } else {
-            Serial.printf("Touch test %d: No touch detected\n", i);
-        }
-        delay(200);
-    }
-    Serial.println("Touch test complete.");
+    touch.begin();
+    Serial.println("Touch initialized.");
     
     // Initialize basic Jolteon system for splash screen
     Serial.println("Initializing Jolteon for splash screen...");
@@ -84,9 +63,6 @@ void setup() {
     // Initialize menu system
     Serial.println("Initializing menu system...");
     menu_init();
-    
-    // Skip touch calibration test for now - using direct polling
-    // touch_calibration_test();
     
     // Move to menu state
     current_state = APP_STATE_MENU;
@@ -175,13 +151,6 @@ void loop() {
             uint32_t cycles = cpu_cycle();
             lcd_cycle(cycles);
             timer_cycle(cycles);
-            
-            // Force display update every few frames since the LCD task might not be calling jolteon_end_frame()
-            static int display_update_counter = 0;
-            if (++display_update_counter >= 3) { // Update display every 3 frames (~20 FPS display updates)
-                jolteon_end_frame(); // Force framebuffer to display transfer
-                display_update_counter = 0;
-            }
             
             // Add frame counter for debugging
             static int frame_counter = 0;
