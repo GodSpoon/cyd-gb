@@ -332,47 +332,41 @@ static void draw_sprites(fbuffer_t *b, int line, int nsprites, struct sprite *s,
 
 static void render_line(void *arg)
 {
-	struct LCDC cline;
-	fbuffer_t* b = framebuffer_manager.get_back_buffer();
-	
-	// Add debug check for null framebuffer
-	if (!b) {
-		Serial.println("[ERROR] Null framebuffer in render_line! Aborting rendering.");
-		return;
-	}
-	
-	while(true) {
-		if(!xQueueReceive(lcdqueue, &cline, portMAX_DELAY))
-			continue;
-		
-		if(lcd_mode==1)
-			continue;
-		
-		int line = cline.lcd_line;
-		struct sprite s[10];
-		
-		lcd_set_palettes(cline);
-		
-		/* Draw the background layer */
-		draw_bg_and_window(b, line, cline);
-		
-		/* Draw sprites */
-		if(cline.sprites_enabled) {
-			uint8_t sprcnt = scan_sprites(s, line, cline.sprite_size);
-			if(sprcnt) {
-				sort_sprites(s, sprcnt);
-				draw_sprites(b, line, sprcnt, s, cline);
-			}
-		}
-
-		if(line == 143) {
-			if (skip_frames) {
-				--skip_frames;
-			} else {
-				jolteon_end_frame();
-			}
-		}
-	}
+    struct LCDC cline;
+    fbuffer_t* b = framebuffer_manager.get_back_buffer();
+    
+    // Add debug check for null framebuffer
+    if (!b) {
+        Serial.println("[ERROR] Null framebuffer in render_line! Aborting rendering.");
+        return;
+    }
+    
+    while(true) {
+        if(!xQueueReceive(lcdqueue, &cline, portMAX_DELAY))
+            continue;
+        if(lcd_mode==1)
+            continue;
+        int line = cline.lcd_line;
+        struct sprite s[10];
+        lcd_set_palettes(cline);
+        // Draw the background layer
+        draw_bg_and_window(b, line, cline);
+        // Draw sprites
+        if(cline.sprites_enabled) {
+            uint8_t sprcnt = scan_sprites(s, line, cline.sprite_size);
+            if(sprcnt) {
+                sort_sprites(s, sprcnt);
+                draw_sprites(b, line, sprcnt, s, cline);
+            }
+        }
+        if(line == 143) {
+            if (skip_frames) {
+                --skip_frames;
+            } else {
+                jolteon_end_frame(); // Push back buffer to display
+            }
+        }
+    }
 }
 
 void lcd_cycle(uint32_t cycles)

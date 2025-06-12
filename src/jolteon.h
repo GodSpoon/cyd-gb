@@ -25,6 +25,7 @@ void jolteon_set_palette(const uint32_t* col);
 void jolteon_render_border(const uint8_t* img, uint32_t size);
 void jolteon_save_sram(uint8_t* ram, uint32_t size);
 void jolteon_load_sram(uint8_t* ram, uint32_t size);
+// jolteon_load_rom loads a .gb ROM from SD card
 const uint8_t* jolteon_load_rom(const char* path);
 const uint8_t* jolteon_load_bootrom(const char* path);
 

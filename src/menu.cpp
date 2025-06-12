@@ -3,6 +3,9 @@
 #include <XPT2046_Touchscreen.h>
 #include "menu.h"
 #include "touch_manager.h"
+#include <SD.h>
+#include <vector>
+#include <string>
 
 // External references to display and touch from main.cpp
 extern TFT_eSPI tft;
@@ -15,7 +18,8 @@ static TouchManager* touch_mgr = nullptr;
 static bool menu_initialized = false;
 static unsigned long last_update = 0;
 static int menu_selection = 0;
-static const char* rom_path = "pokemon_red"; // Default ROM
+static String selected_rom_path = "";
+static std::vector<String> rom_files;
 
 // Menu colors
 #define MENU_BG_COLOR     TFT_BLACK
@@ -28,7 +32,23 @@ void menu_init() {
     if (!touch_mgr) {
         touch_mgr = new TouchManager(touch);
     }
-    
+    // Scan SD card for .gb files
+    rom_files.clear();
+    File root = SD.open("/");
+    if (root) {
+        File file = root.openNextFile();
+        while (file) {
+            String fname = file.name();
+            if (!file.isDirectory() && fname.endsWith(".gb")) {
+                rom_files.push_back(fname);
+            }
+            file = root.openNextFile();
+        }
+        root.close();
+    }
+    if (rom_files.empty()) {
+        rom_files.push_back("No ROMs found");
+    }
     // Clear screen
     tft.fillScreen(MENU_BG_COLOR);
     
@@ -45,17 +65,13 @@ void menu_init() {
     
     // Draw menu options
     tft.setTextSize(2);
-    tft.setCursor(40, 120);
-    tft.setTextColor(menu_selection == 0 ? MENU_SELECT_COLOR : MENU_TEXT_COLOR);
-    tft.println("> Start Pokemon Red");
-    
-    tft.setCursor(40, 150);
-    tft.setTextColor(menu_selection == 1 ? MENU_SELECT_COLOR : MENU_TEXT_COLOR);
-    tft.println("  Settings");
-    
-    tft.setCursor(40, 180);
-    tft.setTextColor(menu_selection == 2 ? MENU_SELECT_COLOR : MENU_TEXT_COLOR);
-    tft.println("  About");
+    int y = 120;
+    for (size_t i = 0; i < rom_files.size(); ++i) {
+        tft.setCursor(40, y);
+        tft.setTextColor(menu_selection == (int)i ? MENU_SELECT_COLOR : MENU_TEXT_COLOR);
+        tft.printf("%s%s", menu_selection == (int)i ? "> " : "  ", rom_files[i].c_str());
+        y += 30;
+    }
     
     // Instructions
     tft.setTextColor(TFT_LIGHTGREY);
@@ -88,14 +104,12 @@ menu_result_t menu_loop() {
 
     // Determine which menu row is being touched
     int touched_selection = -1;
-    if (touching) {
-        if (tp.y >= 120 && tp.y < 150) {
-            touched_selection = 0; // Start Game
-        } else if (tp.y >= 150 && tp.y < 180) {
-            touched_selection = 1; // Settings
-        } else if (tp.y >= 180 && tp.y < 210) {
-            touched_selection = 2; // About
+    int y = 120;
+    for (size_t i = 0; i < rom_files.size(); ++i) {
+        if (touching && tp.y >= y && tp.y < y + 30) {
+            touched_selection = i;
         }
+        y += 30;
     }
 
     // Update menu selection if touch is on a menu row
@@ -106,12 +120,10 @@ menu_result_t menu_loop() {
 
     // Detect tap (touch release) on the currently selected item
     if (!touching && was_touching && last_selection == menu_selection && last_selection != -1) {
-        // Tap detected on highlighted item
-        if (menu_selection == 0) {
-            Serial.println("Menu: Starting game selected!");
+        if (!rom_files.empty() && rom_files[menu_selection] != "No ROMs found") {
+            selected_rom_path = "/" + rom_files[menu_selection];
+            Serial.printf("Menu: Selected ROM: %s\n", selected_rom_path.c_str());
             return MENU_RESULT_START_GAME;
-        } else {
-            Serial.printf("Menu: Option %d selected (not implemented yet)\n", menu_selection);
         }
     }
 
@@ -123,5 +135,9 @@ menu_result_t menu_loop() {
 }
 
 const char* menu_get_rompath() {
-    return rom_path;
+    return selected_rom_path.length() > 0 ? selected_rom_path.c_str() : nullptr;
+}
+
+void menu_set_rompath(const char* path) {
+    if (path) selected_rom_path = path;
 }

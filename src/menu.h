@@ -9,6 +9,7 @@ typedef enum {
 
 void menu_init();
 menu_result_t menu_loop();
+// menu_get_rompath returns the selected ROM file path from SD card
 const char* menu_get_rompath();
 
 #endif

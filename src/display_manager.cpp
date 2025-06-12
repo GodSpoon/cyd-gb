@@ -32,10 +32,9 @@ void DisplayManager::render_gameboy_frame(const uint16_t* pixels) {
         Serial.println("DisplayManager: Cannot render - invalid state");
         return;
     }
-    
-    // Use setAddrWindow + pushColors for maximum reliability (as suggested in user's template)
+    // Use setAddrWindow + pushImageDMA for atomic, non-blocking DMA update
     tft.setAddrWindow(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
-    tft.pushColors((uint16_t*)pixels, GAMEBOY_WIDTH * GAMEBOY_HEIGHT);
+    tft.pushImageDMA(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, (uint16_t*)pixels);
 }
 
 void DisplayManager::clear_screen() {

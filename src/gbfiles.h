@@ -1,8 +1,10 @@
 #ifndef INTERNAL_H
 #define INTERNAL_H
 
-/* Uncomment this to include a fallback ROM */
-// #define USE_INTERNAL_ROM
+#include <stdint.h>
+#ifndef __cplusplus
+#define nullptr ((void*)0)
+#endif
 
 /* Uncomment if including a bios on compile */
 //#define USE_INTERNAL_BIOS
@@ -10,12 +12,7 @@
 // Disable internal border for now
 //#define USE_INTERNAL_BORDER
 
-#ifdef USE_INTERNAL_ROM
-	#include "gbrom.h"
-#else
-	const uint8_t* gb_rom = nullptr;
-	const uint32_t gb_rom_size = 0;
-#endif
+// ROM is now loaded from SD card; fallback ROM is not used
 
 #ifdef USE_INTERNAL_BIOS
 	#include "gbbios.h"

@@ -13,7 +13,7 @@
 #include "interrupt.h"
 #include "mbc.h"
 #include "rom.h"
-#include "pokemon_red_rom.h"
+#include <SD.h>
 #include "jolteon_splash_landscape.h"
 #include "core/framebuffer_manager.h"
 
@@ -90,6 +90,10 @@ bool allocate_buffers_optimized() {
         return false;
     }
     pixels = framebuffer_manager.get_back_buffer();
+    // Set back buffer in DisplayManager if available
+    if (display_mgr) {
+        display_mgr->set_back_buffer(pixels);
+    }
     Serial.printf("  Framebuffer (back) at: %p\n", pixels);
     return true;
 }
@@ -373,9 +377,50 @@ const uint8_t* jolteon_load_bootrom(const char* path)
 
 const uint8_t* jolteon_load_rom(const char* path)
 {
-    // Return the compiled-in Pokemon Red ROM
-    Serial.println("Loading Pokemon Red ROM...");
-    return src_roms_Pokemon___Red_Version_gb;
+    static uint8_t* last_rombuf = nullptr;
+    if (last_rombuf) {
+        free(last_rombuf);
+        last_rombuf = nullptr;
+    }
+    if (!path || strlen(path) == 0) {
+        Serial.println("No ROM path provided to jolteon_load_rom");
+        return nullptr;
+    }
+    Serial.printf("Attempting to load ROM from SD: %s\n", path);
+    File romfile = SD.open(path, FILE_READ);
+    if (!romfile) {
+        Serial.println("Failed to open ROM file on SD card");
+        return nullptr;
+    }
+    size_t romsize = romfile.size();
+    if (romsize == 0 || romsize > 2 * 1024 * 1024) { // 2MB max for GB ROM
+        Serial.printf("ROM file size invalid: %u bytes\n", (unsigned)romsize);
+        romfile.close();
+        return nullptr;
+    }
+    last_rombuf = (uint8_t*)heap_caps_malloc(romsize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!last_rombuf) {
+        last_rombuf = (uint8_t*)malloc(romsize);
+        if (!last_rombuf) {
+            Serial.println("Failed to allocate memory for ROM (PSRAM and internal RAM exhausted)");
+            romfile.close();
+            return nullptr;
+        } else {
+            Serial.println("[WARN] ROM allocated in internal RAM (PSRAM unavailable)");
+        }
+    } else {
+        Serial.println("ROM allocated in PSRAM");
+    }
+    size_t read_bytes = romfile.read(last_rombuf, romsize);
+    romfile.close();
+    if (read_bytes != romsize) {
+        Serial.println("Failed to read complete ROM file");
+        free(last_rombuf);
+        last_rombuf = nullptr;
+        return nullptr;
+    }
+    Serial.printf("ROM loaded from SD (%u bytes)\n", (unsigned)romsize);
+    return last_rombuf;
 }
 
 void jolteon_display_splash_screen(void)
