@@ -10,7 +10,6 @@ extern MBCReader mbc_read_ram;
 extern MBCWriter mbc_write_rom;
 extern MBCWriter mbc_write_ram;
 
-extern const uint8_t* rombank;
 extern uint8_t* rambank;
 
 bool mbc_init();

@@ -41,6 +41,9 @@ void jolteon_optimize_memory_early(void);
 void jolteon_display_splash_screen(void);
 void jolteon_display_test_pattern(void);
 
+// Display manager access
+DisplayManager* get_display_manager(void);
+
 #ifdef __cplusplus
 }
 #endif

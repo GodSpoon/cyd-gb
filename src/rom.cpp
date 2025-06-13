@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "rom.h"
+#include "rom_streamer.h"
 
 const uint8_t *bytes;
 
@@ -29,28 +30,43 @@ static const uint8_t header[] = {
 
 bool rom_init(const uint8_t* rombytes)
 {
-	if(!rombytes)
+	// For ROM streaming, rombytes is a dummy pointer - we use the ROM streamer
+	if(!rombytes && !rom_streamer.is_valid())
 		return false;
+
+	// Read ROM header via ROM streamer instead of direct memory access
+	uint8_t header_buffer[48]; // Nintendo logo header
+	for (int i = 0; i < 48; i++) {
+		header_buffer[i] = rom_streamer.read_byte(0x104 + i);
+	}
 
 	/* Check Nintendo logo on ROM header */
-	if(memcmp(&rombytes[0x104], header, sizeof(header)) != 0)
+	if(memcmp(header_buffer, header, sizeof(header)) != 0)
 		return false;
 	
-	memcpy(romtitle, &rombytes[0x134], 0x143-0x134);
+	// Read title via ROM streamer
+	for (int i = 0; i < 0x143-0x134; i++) {
+		romtitle[i] = rom_streamer.read_byte(0x134 + i);
+	}
+	romtitle[0x143-0x134] = 0; // Null terminate
 
-	uint8_t cart_type  = rombytes[0x147];
-	rominfo.rom_banks  = rombytes[0x148]>=0x52 ? rombank_count[rombytes[0x148] - 0x52] : rombank_count[rombytes[0x148]];
-	rominfo.ram_banks  = rambank_count[rombytes[0x149]];
-	//rominfo.region    = rombytes[0x14A];
-	//rominfo.version   = rombytes[0x14C];
+	uint8_t cart_type  = rom_streamer.read_byte(0x147);
+	uint8_t rom_size_code = rom_streamer.read_byte(0x148);
+	uint8_t ram_size_code = rom_streamer.read_byte(0x149);
+	
+	rominfo.rom_banks  = rom_size_code>=0x52 ? rombank_count[rom_size_code - 0x52] : rombank_count[rom_size_code];
+	rominfo.ram_banks  = rambank_count[ram_size_code];
+	//rominfo.region    = rom_streamer.read_byte(0x14A);
+	//rominfo.version   = rom_streamer.read_byte(0x14C);
 
 	uint8_t checksum = 0;
 	for(int i = 0x134; i <= 0x14C; i++)
-		checksum = checksum - rombytes[i] - 1;
+		checksum = checksum - rom_streamer.read_byte(i) - 1;
 
-	if(rombytes[0x14D] != checksum)
+	if(rom_streamer.read_byte(0x14D) != checksum)
 		return false;
 
+	// For ROM streaming, bytes pointer is set to a dummy value
 	bytes = rombytes;
 
 	switch(cart_type)

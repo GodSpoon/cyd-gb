@@ -8,8 +8,10 @@
 #include "jolteon.h"
 #include "mem.h"
 #include "core/framebuffer_manager.h"
+#include "display_manager.h"
 
 extern FramebufferManager framebuffer_manager;
+extern DisplayManager* get_display_manager(); // Forward declaration
 
 #define MODE2_BOUNDS 	(204/4)
 #define MODE3_BOUNDS 	(284/4)
@@ -196,7 +198,7 @@ static inline void sort_sprites(struct sprite *s, int n)
 		{
 			if(s[i].x < s[i+1].x)
 			{
-				sprite c = s[i];
+				struct sprite c = s[i];
 				s[i] = s[i+1];
 				s[i+1] = c;
 				swapped = 1;
@@ -333,13 +335,6 @@ static void draw_sprites(fbuffer_t *b, int line, int nsprites, struct sprite *s,
 static void render_line(void *arg)
 {
     struct LCDC cline;
-    fbuffer_t* b = framebuffer_manager.get_back_buffer();
-    
-    // Add debug check for null framebuffer
-    if (!b) {
-        Serial.println("[ERROR] Null framebuffer in render_line! Aborting rendering.");
-        return;
-    }
     
     while(true) {
         if(!xQueueReceive(lcdqueue, &cline, portMAX_DELAY))
@@ -349,6 +344,22 @@ static void render_line(void *arg)
         int line = cline.lcd_line;
         struct sprite s[10];
         lcd_set_palettes(cline);
+        
+        // Try to get back buffer from DisplayManager first, fallback to framebuffer_manager
+        fbuffer_t* b = nullptr;
+        DisplayManager* display_mgr = get_display_manager();
+        if (display_mgr && display_mgr->get_back_buffer()) {
+            b = display_mgr->get_back_buffer();
+        } else {
+            b = framebuffer_manager.get_back_buffer();
+        }
+        
+        // Add debug check for null framebuffer
+        if (!b) {
+            Serial.println("[ERROR] Null framebuffer in render_line! Aborting rendering.");
+            continue;
+        }
+        
         // Draw the background layer
         draw_bg_and_window(b, line, cline);
         // Draw sprites
@@ -363,7 +374,15 @@ static void render_line(void *arg)
             if (skip_frames) {
                 --skip_frames;
             } else {
-                jolteon_end_frame(); // Push back buffer to display
+                // Use DisplayManager's non-blocking swap_buffers for better performance
+                if (display_mgr) {
+                    if (!display_mgr->try_swap_buffers()) {
+                        // DMA was busy, frame was skipped - this is OK for performance
+                        // Serial.println("Frame skipped - DMA busy");
+                    }
+                } else {
+                    jolteon_end_frame(); // Fallback to original method
+                }
             }
         }
     }

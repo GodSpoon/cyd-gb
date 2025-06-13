@@ -1,4 +1,7 @@
 #include "display_manager.h"
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 DisplayManager::DisplayManager(TFT_eSPI& display) : tft(display) {
 }
@@ -21,6 +24,20 @@ bool DisplayManager::init() {
     // Draw border around Game Boy area
     draw_gameboy_border();
     
+    // Allocate back buffer for double buffering
+    if (!allocate_back_buffer()) {
+        Serial.println("DisplayManager: Warning - Could not allocate back buffer, using direct rendering");
+    }
+    
+    // Check if DMA is available
+    #ifdef TFT_eSPI_DMA
+    dma_enabled = true;
+    Serial.println("DisplayManager: DMA enabled for non-blocking transfers");
+    #else
+    dma_enabled = false;
+    Serial.println("DisplayManager: DMA not available, using blocking transfers");
+    #endif
+    
     initialized = true;
     Serial.println("DisplayManager: Initialized successfully");
     return true;
@@ -32,9 +49,23 @@ void DisplayManager::render_gameboy_frame(const uint16_t* pixels) {
         Serial.println("DisplayManager: Cannot render - invalid state");
         return;
     }
-    // Use setAddrWindow + pushImageDMA for atomic, non-blocking DMA update
+    
+    // Wait for any pending DMA transfer to complete
+    if (dma_enabled) {
+        wait_for_dma();
+    }
+    
+    // Use setAddrWindow + pushImageDMA for atomic DMA update
     tft.setAddrWindow(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
-    tft.pushImageDMA(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, (uint16_t*)pixels);
+    
+    if (dma_enabled) {
+        dma_busy = true;
+        tft.pushImageDMA(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, (uint16_t*)pixels);
+        // Note: TFT_eSPI's pushImageDMA is blocking, so we set dma_busy to false immediately
+        dma_busy = false;
+    } else {
+        tft.pushImage(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, (uint16_t*)pixels);
+    }
 }
 
 void DisplayManager::clear_screen() {
@@ -115,4 +146,98 @@ void DisplayManager::display_test_pattern() {
     }
     
     render_gameboy_frame(test_pattern);
+}
+
+bool DisplayManager::allocate_back_buffer() {
+    if (back_buffer_allocated) return true;
+    
+    size_t buffer_size = GAMEBOY_WIDTH * GAMEBOY_HEIGHT * sizeof(uint16_t);
+    Serial.printf("DisplayManager: Allocating back buffer (%d bytes)...\n", buffer_size);
+    
+    // CYD boards don't have PSRAM - use internal RAM only
+    back_buffer = (uint16_t*)malloc(buffer_size);
+    
+    if (back_buffer) {
+        // Clear the buffer
+        memset(back_buffer, 0, buffer_size);
+        back_buffer_allocated = true;
+        Serial.printf("DisplayManager: Back buffer allocated at %p\n", back_buffer);
+        return true;
+    }
+    
+    Serial.println("DisplayManager: Failed to allocate back buffer");
+    return false;
+}
+
+void DisplayManager::deallocate_back_buffer() {
+    if (back_buffer_allocated && back_buffer) {
+        free(back_buffer);
+        back_buffer = nullptr;
+        back_buffer_allocated = false;
+        Serial.println("DisplayManager: Back buffer deallocated");
+    }
+}
+
+void DisplayManager::swap_buffers() {
+    if (!back_buffer || !initialized) {
+        Serial.println("DisplayManager: Cannot swap buffers - invalid state");
+        return;
+    }
+    
+    // Wait for any pending DMA transfer to complete
+    if (dma_enabled) {
+        wait_for_dma();
+    }
+    
+    // Atomic frame update using DMA
+    tft.setAddrWindow(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
+    
+    if (dma_enabled) {
+        dma_busy = true;
+        tft.pushImageDMA(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, back_buffer);
+        // Note: TFT_eSPI's pushImageDMA is blocking, so we set dma_busy to false immediately
+        dma_busy = false;
+    } else {
+        tft.pushImage(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, back_buffer);
+    }
+}
+
+bool DisplayManager::try_swap_buffers() {
+    if (!back_buffer || !initialized) {
+        Serial.println("DisplayManager: Cannot swap buffers - invalid state");
+        return false;
+    }
+    
+    // Check if DMA is busy - if so, skip this frame (though in this implementation DMA is blocking)
+    if (dma_enabled && dma_busy) {
+        return false; // Skip frame, DMA still busy
+    }
+    
+    // Atomic frame update using DMA
+    tft.setAddrWindow(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
+    
+    if (dma_enabled) {
+        dma_busy = true;
+        tft.pushImageDMA(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, back_buffer);
+        // Note: TFT_eSPI's pushImageDMA is blocking, so we set dma_busy to false immediately
+        dma_busy = false;
+    } else {
+        tft.pushImage(CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT, back_buffer);
+    }
+    
+    return true;
+}
+
+void DisplayManager::wait_for_dma() {
+    if (!dma_enabled) return;
+    
+    // Since TFT_eSPI's pushImageDMA is blocking in this version, 
+    // we don't need to wait - but keep this for future compatibility
+    while (dma_busy) {
+        vTaskDelay(1); // Yield to other tasks
+    }
+}
+
+DisplayManager::~DisplayManager() {
+    deallocate_back_buffer();
 }

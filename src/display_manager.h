@@ -25,11 +25,25 @@ private:
     
     // Add pointer for back buffer (double buffering)
     uint16_t* back_buffer = nullptr;
+    bool back_buffer_allocated = false;
+    bool dma_enabled = false;
+    volatile bool dma_busy = false;
     
 public:
     DisplayManager(TFT_eSPI& display);
     
     bool init();
+    
+    // Double buffering methods
+    bool allocate_back_buffer();
+    void deallocate_back_buffer();
+    uint16_t* get_back_buffer() { return back_buffer; }
+    void swap_buffers(); // Atomic frame update
+    
+    // DMA management
+    bool is_dma_busy() const { return dma_busy; }
+    void wait_for_dma();
+    bool try_swap_buffers(); // Non-blocking version
     
     // Single, reliable rendering method
     // Uses DMA for non-blocking display updates
@@ -49,6 +63,9 @@ public:
     
     // Set the back buffer pointer
     void set_back_buffer(uint16_t* buffer) { back_buffer = buffer; }
+    
+    // Destructor to clean up
+    ~DisplayManager();
 };
 
 #endif // DISPLAY_MANAGER_H

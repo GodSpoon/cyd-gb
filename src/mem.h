@@ -12,7 +12,7 @@ extern uint8_t* mem;
 
 // Segmented memory fallback (if contiguous 64KB allocation fails)
 extern bool use_segmented_memory;
-extern uint8_t* mem_segments[4];  // 4 x 16KB segments
+extern uint8_t* mem_segments[16];  // 16 x 4KB segments
 
 bool mmu_init(const uint8_t* bootrom = nullptr);
 uint8_t mem_get_byte(uint16_t);

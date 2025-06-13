@@ -1,11 +1,21 @@
 #include <Arduino.h>
 #include <esp_heap_caps.h>
+#include <stdlib.h>
 #include "mbc.h"
 #include "rom.h"
 #include "jolteon.h"
 #include "core/framebuffer_manager.h"
+#include "rom_streamer.h"
 
-#define SET_ROM_BANK(n)		(rombank = &rom[((n) & (rom_banks - 1)) * 0x4000])
+// Updated to work with ROM streaming - use streaming for bank switching
+#define SET_ROM_BANK(n) do { \
+    uint32_t bank = (n) & (rom_banks - 1); \
+    curr_rom_bank = bank; \
+    /* Pre-cache the bank in ROM streamer */ \
+    rom_streamer.set_bank(bank); \
+    /* rombank pointer not used - access via rom_streamer.read_byte() */ \
+} while(0)
+
 #define SET_RAM_BANK(n)		(rambank = &ram[((n) & (ram_banks - 1)) * 0x2000])
 
 static uint32_t curr_rom_bank = 1;
@@ -16,7 +26,6 @@ static bool ram_select;
 static bool ram_enabled;
 static const uint8_t *rom;
 static uint8_t *ram;
-const uint8_t *rombank;
 uint8_t *rambank;
 static const s_rominfo *rominfo;
 
@@ -57,18 +66,30 @@ bool mbc_init()
 	int alloc_size = ram_size < 1024*8 ? 1024*8 : ram_size;
 	Serial.printf("mbc_init: Attempting to allocate %d bytes for cartridge RAM\n", alloc_size);
 	
-	// Try multiple allocation strategies like we did for MMU
-	Serial.println("mbc_init: Trying PSRAM allocation...");
-	ram = (uint8_t*)heap_caps_calloc(1, alloc_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-	
-	if (!ram) {
-		Serial.println("mbc_init: PSRAM allocation failed, trying DMA capable memory...");
-		ram = (uint8_t*)heap_caps_calloc(1, alloc_size, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+	// CYD boards don't have PSRAM - use segmented allocation for large RAM
+	if (alloc_size <= 8192) {  // 8KB or less - try single allocation
+		Serial.println("mbc_init: Using single allocation for small cartridge RAM...");
+		ram = (uint8_t*)malloc(alloc_size);
+		if (ram) memset(ram, 0, alloc_size); // Zero manually
+	} else {
+		Serial.printf("mbc_init: Large RAM requirement (%d bytes) - using reduced allocation...\n", alloc_size);
+		// For Pokemon Yellow (32KB), try to allocate less RAM - many games work with reduced RAM
+		int reduced_size = 4096; // Try 4KB first
+		Serial.printf("mbc_init: Trying reduced RAM size: %d bytes\n", reduced_size);
+		ram = (uint8_t*)malloc(reduced_size);
+		if (ram) {
+			memset(ram, 0, reduced_size);
+			alloc_size = reduced_size;
+		}
 	}
 	
 	if (!ram) {
-		Serial.println("mbc_init: DMA allocation failed, trying internal memory...");
-		ram = (uint8_t*)heap_caps_aligned_calloc(32, 1, alloc_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+		Serial.println("mbc_init: Regular allocation failed, trying aligned memory...");
+		// Try aligned allocation as fallback but avoid PSRAM-related caps
+		ram = (uint8_t*)aligned_alloc(32, alloc_size);
+		if (ram) {
+			memset(ram, 0, alloc_size);  // Clear the memory since aligned_alloc doesn't zero it
+		}
 	}
 	
 	if (!ram) {
@@ -78,10 +99,11 @@ bool mbc_init()
 	
 	if (!ram) {
 		// Try smaller allocation - Pokemon Red might work with less RAM
-		int min_size = 8192; // 8KB minimum
+		int min_size = 2048; // 2KB minimum
 		Serial.printf("mbc_init: Large allocation failed, trying smaller allocation: %d bytes\n", min_size);
-		ram = (uint8_t*)calloc(1, min_size);
+		ram = (uint8_t*)malloc(min_size); // Use malloc instead of calloc to save time
 		if (ram) {
+			memset(ram, 0, min_size); // Zero it manually
 			Serial.printf("mbc_init: Using reduced RAM size: %d bytes instead of %d\n", min_size, alloc_size);
 			alloc_size = min_size;
 			// Update ram_banks to match reduced allocation

@@ -16,6 +16,8 @@
 #include <SD.h>
 #include "jolteon_splash_landscape.h"
 #include "core/framebuffer_manager.h"
+#include "rom_streamer.h"
+#include "error_handler.h"
 
 // External reference to TFT display and touch objects from main.cpp
 extern TFT_eSPI tft;
@@ -24,6 +26,11 @@ extern FramebufferManager framebuffer_manager;
 
 // Display manager instance
 static DisplayManager* display_mgr = nullptr;
+
+// Function to provide access to display manager for other modules
+DisplayManager* get_display_manager() {
+    return display_mgr;
+}
 
 #define GAMEBOY_WIDTH 160
 #define GAMEBOY_HEIGHT 144
@@ -70,15 +77,8 @@ void analyze_memory_fragmentation() {
     Serial.printf("Free blocks: %d\n", info.free_blocks);
     Serial.printf("Total blocks: %d\n", info.total_blocks);
     
-    // Check PSRAM if available
-    if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) > 0) {
-        heap_caps_get_info(&info, MALLOC_CAP_SPIRAM);
-        Serial.println("\nPSRAM status:");
-        Serial.printf("  Free PSRAM: %d bytes\n", info.total_free_bytes);
-        Serial.printf("  Largest PSRAM block: %d bytes\n", info.largest_free_block);
-    } else {
-        Serial.println("PSRAM not available or not configured");
-    }
+    // PSRAM is disabled for CYD boards - skipping PSRAM status check
+    Serial.println("PSRAM not available - using internal RAM only");
     Serial.println("----------------------------------------");
 }
 
@@ -104,6 +104,9 @@ void jolteon_init(void)
     Serial.println("Initializing Jolteon Game Boy emulator...");
     Serial.println("===============================");
     
+    // Early memory optimization to reduce fragmentation
+    heap_caps_check_integrity_all(true);
+    
     // Analyze memory state first
     analyze_memory_fragmentation();
     
@@ -112,6 +115,19 @@ void jolteon_init(void)
     Serial.printf("\nMemory allocation requirements:\n");
     Serial.printf("  Framebuffer: %d bytes\n", fb_size);
     Serial.printf("  Total needed: %d bytes\n", fb_size);
+    
+    // Check if we have enough memory before starting
+    size_t free_heap = ESP.getFreeHeap();
+    size_t min_required = fb_size + 100 * 1024; // Framebuffer + 100KB overhead
+    
+    if (free_heap < min_required) {
+        char error_msg[128];
+        snprintf(error_msg, sizeof(error_msg), 
+            "Insufficient memory: %d KB free, need %d KB", 
+            (int)(free_heap/1024), (int)(min_required/1024));
+        jolteon_faint(error_msg);
+        return;
+    }
     
     // Try optimized allocation strategy
     if (!allocate_buffers_optimized()) {
@@ -377,50 +393,27 @@ const uint8_t* jolteon_load_bootrom(const char* path)
 
 const uint8_t* jolteon_load_rom(const char* path)
 {
+    // Remove old allocation-based loading
     static uint8_t* last_rombuf = nullptr;
     if (last_rombuf) {
         free(last_rombuf);
         last_rombuf = nullptr;
     }
+    
     if (!path || strlen(path) == 0) {
         Serial.println("No ROM path provided to jolteon_load_rom");
         return nullptr;
     }
-    Serial.printf("Attempting to load ROM from SD: %s\n", path);
-    File romfile = SD.open(path, FILE_READ);
-    if (!romfile) {
-        Serial.println("Failed to open ROM file on SD card");
+    
+    Serial.printf("Loading ROM via streaming: %s\n", path);
+    
+    if (!rom_streamer.init(path)) {
+        Serial.println("ROM streaming initialization failed");
         return nullptr;
     }
-    size_t romsize = romfile.size();
-    if (romsize == 0 || romsize > 2 * 1024 * 1024) { // 2MB max for GB ROM
-        Serial.printf("ROM file size invalid: %u bytes\n", (unsigned)romsize);
-        romfile.close();
-        return nullptr;
-    }
-    last_rombuf = (uint8_t*)heap_caps_malloc(romsize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!last_rombuf) {
-        last_rombuf = (uint8_t*)malloc(romsize);
-        if (!last_rombuf) {
-            Serial.println("Failed to allocate memory for ROM (PSRAM and internal RAM exhausted)");
-            romfile.close();
-            return nullptr;
-        } else {
-            Serial.println("[WARN] ROM allocated in internal RAM (PSRAM unavailable)");
-        }
-    } else {
-        Serial.println("ROM allocated in PSRAM");
-    }
-    size_t read_bytes = romfile.read(last_rombuf, romsize);
-    romfile.close();
-    if (read_bytes != romsize) {
-        Serial.println("Failed to read complete ROM file");
-        free(last_rombuf);
-        last_rombuf = nullptr;
-        return nullptr;
-    }
-    Serial.printf("ROM loaded from SD (%u bytes)\n", (unsigned)romsize);
-    return last_rombuf;
+    
+    Serial.printf("ROM streaming ready: %s (%u bytes)\n", path, rom_streamer.get_size());
+    return (const uint8_t*)0x1; // Non-null success indicator
 }
 
 void jolteon_display_splash_screen(void)
@@ -452,11 +445,8 @@ void jolteon_display_splash_screen(void)
     
     Serial.printf("Attempting to allocate %d bytes for splash buffer...\n", buffer_size);
     
-    // Try to allocate buffer (prefer PSRAM if available)
-    image_buffer = (uint16_t*)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!image_buffer) {
-        image_buffer = (uint16_t*)malloc(buffer_size);
-    }
+    // Try to allocate buffer (prefer internal RAM for CYD boards without PSRAM)
+    image_buffer = (uint16_t*)malloc(buffer_size);
     
     if (image_buffer) {
         Serial.println("Splash buffer allocated successfully - copying image data...");
@@ -531,9 +521,9 @@ private:
     bool use_dma = false;
 public:
     bool init() {
-        // Allocate framebuffer for 160x144 Game Boy screen
+        // Allocate framebuffer for 160x144 Game Boy screen (internal RAM only)
         if (!framebuffer) {
-            framebuffer = (uint16_t*)heap_caps_malloc(160 * 144 * sizeof(uint16_t), MALLOC_CAP_8BIT);
+            framebuffer = (uint16_t*)malloc(160 * 144 * sizeof(uint16_t));
         }
         use_dma = false; // Set true if DMA is available and desired
         return framebuffer != nullptr;
@@ -561,7 +551,7 @@ public:
     }
     uint16_t* get_framebuffer() { return framebuffer; }
     ~DisplayPipeline() {
-        if (framebuffer) heap_caps_free(framebuffer);
+        if (framebuffer) free(framebuffer);
     }
 };
 
@@ -573,71 +563,16 @@ void lcd_render_scanline_direct(uint8_t line, const uint8_t* pixel_data, Display
 }
 
 // Phase 3: Architecture Improvements
-// 3.1 Error Handling Strategy
-enum class EmulatorError {
-    SUCCESS,
-    MEMORY_ERROR,
-    ROM_ERROR,
-    DISPLAY_ERROR,
-    SD_ERROR
-};
-
-class ErrorHandler {
-public:
-    static void handle_error(EmulatorError error, const char* context) {
-        switch (error) {
-            case EmulatorError::SUCCESS:
-                Serial.println("[OK] No error.");
-                break;
-            case EmulatorError::MEMORY_ERROR:
-                Serial.printf("[MEMORY ERROR] Context: %s\n", context);
-                display_error_screen("Memory allocation failed!");
-                break;
-            case EmulatorError::ROM_ERROR:
-                Serial.printf("[ROM ERROR] Context: %s\n", context);
-                display_error_screen("ROM loading failed!");
-                break;
-            case EmulatorError::DISPLAY_ERROR:
-                Serial.printf("[DISPLAY ERROR] Context: %s\n", context);
-                display_error_screen("Display error!");
-                break;
-            case EmulatorError::SD_ERROR:
-                Serial.printf("[SD ERROR] Context: %s\n", context);
-                display_error_screen("SD card error!");
-                break;
-        }
-    }
-    static void display_error_screen(const char* message) {
-        if (display_mgr) {
-            display_mgr->display_error(message);
-        } else {
-            tft.fillScreen(TFT_RED);
-            tft.setTextColor(TFT_WHITE, TFT_RED);
-            tft.setTextSize(2);
-            tft.setCursor(20, 100);
-            tft.print("ERROR:");
-            tft.setCursor(20, 130);
-            tft.print(message);
-        }
-    }
-    static bool attempt_recovery(EmulatorError error) {
-        // Simple stub: always return false for now
-        // Could implement memory cleanup, SD card reinit, etc.
-        Serial.printf("Attempting recovery from error: %d\n", (int)error);
-        return false;
-    }
-};
-
 // 3.2 Configuration Management
 struct EmulatorConfig {
-    bool use_psram;
+    bool use_streaming;  // Use streaming from SD instead of PSRAM
     bool enable_sound;
     uint8_t frameskip;
     bool debug_mode;
 
     static EmulatorConfig detect_optimal() {
         EmulatorConfig cfg;
-        cfg.use_psram = (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) > 0);
+        cfg.use_streaming = true;  // Always use streaming for CYD boards without PSRAM
         cfg.enable_sound = true; // Could check hardware
         cfg.frameskip = 0; // Default, could tune based on performance
         cfg.debug_mode = false;

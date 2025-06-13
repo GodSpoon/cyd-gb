@@ -11,6 +11,7 @@
 #include "cpu.h"
 #include "core/framebuffer_manager.h"
 #include "jolteon.h"
+#include "rom_streamer.h"
 
 void analyze_memory_fragmentation();
 
@@ -18,7 +19,7 @@ bool usebootrom = false;
 uint8_t *mem = nullptr;
 
 // Always use segmented memory for ESP32 constraints
-uint8_t* mem_segments[4] = {nullptr, nullptr, nullptr, nullptr};
+uint8_t* mem_segments[16] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
 
 static uint8_t *echo;
 static uint32_t DMA_pending;
@@ -29,14 +30,14 @@ static const uint8_t *rom;
 
 // Segmented memory access functions
 uint8_t segmented_read_byte(uint16_t addr) {
-    uint8_t segment = addr >> 14;    
-    uint16_t offset = addr & 0x3FFF;    
+    uint8_t segment = addr >> 12;  // 4KB segments  
+    uint16_t offset = addr & 0x0FFF;  // 4KB (4096 bytes = 0x1000) mask
     return mem_segments[segment][offset];
 }
 
 void segmented_write_byte(uint16_t addr, uint8_t value) {
-    uint8_t segment = addr >> 14;    
-    uint16_t offset = addr & 0x3FFF;    
+    uint8_t segment = addr >> 12;  // 4KB segments
+    uint16_t offset = addr & 0x0FFF;  // 4KB mask
     mem_segments[segment][offset] = value;
 }
 
@@ -52,8 +53,10 @@ uint8_t mem_get_byte(uint16_t i)
 		}
 	}
 
-	if(i >= 0x4000 && i < 0x8000)
-		return rombank[i - 0x4000];
+	// ROM areas (0x0000-0x7FFF) - use streamer for all ROM access
+	if (i < 0x8000) {
+		return rom_streamer.read_byte(i);
+	}
 
 	else if (i >= 0xA000 && i < 0xC000)
 		return mbc_read_ram(i);
@@ -119,8 +122,12 @@ void mem_write_byte(uint16_t d, uint8_t i)
 			uint16_t addr = i * 0x100;
 			const uint8_t* src = nullptr;
 			if (addr >= 0x4000 && addr < 0x8000) {
-				src = rombank;
-				addr -= 0x4000;
+				// ROM area - copy via ROM streaming (slower but saves memory)
+				for (int j = 0; j < 0x100; j++) {
+					echo[0xFE00 + j] = rom_streamer.read_byte(addr + j);
+				}
+				DMA_pending = cpu_get_cycles();
+				break; // Skip the memcpy below
 			}
 			else if (addr >= 0xA000 && addr < 0xC000) {
 				src = rambank;
@@ -168,12 +175,19 @@ bool mmu_init(const uint8_t* bootrom)
 	// Always use segmented memory for ESP32 constraints
 	Serial.println("mmu_init: Using segmented memory allocation for ESP32...");
 	
-	// Allocate 4 segments of 16KB each (total 64KB)
-	for (int i = 0; i < 4; i++) {
-		mem_segments[i] = (uint8_t*)calloc(1, 0x4000); // 16KB per segment
+	// Allocate 16 segments of 4KB each (total 64KB)
+	for (int i = 0; i < 16; i++) {
+		mem_segments[i] = (uint8_t*)calloc(1, 0x1000); // 4KB per segment
 		if (!mem_segments[i]) {
 			Serial.printf("[ERROR] mmu_init: Failed to allocate segment %d\n", i);
 			analyze_memory_fragmentation(); // Log detailed memory fragmentation
+			// Clean up previously allocated segments
+			for (int j = 0; j < i; j++) {
+				if (mem_segments[j]) {
+					free(mem_segments[j]);
+					mem_segments[j] = nullptr;
+				}
+			}
 			return false;
 		}
 		Serial.printf("mmu_init: Segment %d allocated at %p\n", i, mem_segments[i]);
@@ -182,7 +196,7 @@ bool mmu_init(const uint8_t* bootrom)
 	if (!mbc_init()) {
 		Serial.println("mmu_init: mbc_init failed");
 		// Clean up segments
-		for (int i = 0; i < 4; i++) {
+		for (int i = 0; i < 16; i++) {
 			if (mem_segments[i]) {
 				free(mem_segments[i]);
 				mem_segments[i] = nullptr;
@@ -191,22 +205,47 @@ bool mmu_init(const uint8_t* bootrom)
 		return false;
 	}
 	
+	// Initialize ROM access
 	rom = rom_getbytes();
 	
 	// Initialize echo pointer for segmented memory
-	echo = mem_segments[3] - (0xE000 - 0xC000); // Point to segment 3 with offset
+	echo = mem_segments[12] - (0xE000 - 0xC000); // Point to segment 12 (Work RAM) with offset
 	
+	// Don't copy ROM to memory - use streamer
 	if (bootrom) {
-		// Copy bootrom to first segment
+		// Only copy bootrom if provided
 		memcpy(&mem_segments[0][0x0000], &bootrom[0x0000], 0x100);
-		memcpy(&mem_segments[0][0x0100], &rom[0x0100], 0x4000 - 0x100);
+		// Copy first ROM bank after bootrom via streamer (spans segments 0-3)
+		for (int i = 0x100; i < 0x1000; i++) {
+			mem_segments[0][i] = rom_streamer.read_byte(i);
+		}
+		for (int i = 0x1000; i < 0x2000; i++) {
+			mem_segments[1][i - 0x1000] = rom_streamer.read_byte(i);
+		}
+		for (int i = 0x2000; i < 0x3000; i++) {
+			mem_segments[2][i - 0x2000] = rom_streamer.read_byte(i);
+		}
+		for (int i = 0x3000; i < 0x4000; i++) {
+			mem_segments[3][i - 0x3000] = rom_streamer.read_byte(i);
+		}
 		usebootrom = true;
 		Serial.println("mmu_init: Boot ROM loaded successfully");
 		return true;
 	}
 	
-	// Copy first ROM bank to first segment
-	memcpy(&mem_segments[0][0x0000], &rom[0x0000], 0x4000);
+	// Copy first ROM bank via streamer (spans segments 0-3)
+	for (int i = 0; i < 0x1000; i++) {
+		mem_segments[0][i] = rom_streamer.read_byte(i);
+	}
+	for (int i = 0x1000; i < 0x2000; i++) {
+		mem_segments[1][i - 0x1000] = rom_streamer.read_byte(i);
+	}
+	for (int i = 0x2000; i < 0x3000; i++) {
+		mem_segments[2][i - 0x2000] = rom_streamer.read_byte(i);
+	}
+	for (int i = 0x3000; i < 0x4000; i++) {
+		mem_segments[3][i - 0x3000] = rom_streamer.read_byte(i);
+	}
 	
 	// Set default register values in segment 3 (high memory area)
 	segmented_write_byte(0xFF10, 0x80);

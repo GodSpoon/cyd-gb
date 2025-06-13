@@ -2,6 +2,9 @@
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
 #include <SD.h> // Add SD card support
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
 
 // Game Boy emulator headers
 #include "timer.h"
@@ -13,6 +16,8 @@
 #include "menu.h"
 #include "core/framebuffer_manager.h"
 #include "mbc.h"
+#include "error_handler.h"
+#include "rom_streamer.h"
 
 // Touch pin definitions (TFT pins are configured via build flags)
 #define TOUCH_CS  33
@@ -36,31 +41,69 @@ FramebufferManager framebuffer_manager;
 
 // Forward declaration to resolve order-of-definition error
 void initialize_emulator();
+void print_memory_status();
 
-// Emulation task handle
+// Task handles for core affinity optimization
 TaskHandle_t emulationTaskHandle = NULL;
+TaskHandle_t renderingTaskHandle = NULL;
 
-// Emulation task function
+// Queue for frame completion signaling
+QueueHandle_t frameCompleteQueue = NULL;
+
+// Core 1: Dedicated emulation task (CPU, memory, timers)
 void emulation_task(void* pvParameters) {
+    Serial.println("Emulation task started on Core 1");
+    
     while (1) {
         if (current_state == APP_STATE_EMULATOR) {
+            // Core emulation logic - CPU, memory, timers
             jolteon_update();
             uint32_t cycles = cpu_cycle();
             lcd_cycle(cycles);
             timer_cycle(cycles);
+            
             static int frame_counter = 0;
             if (++frame_counter % 60 == 0) {
-                Serial.printf("Game Boy running: Frame %d, Cycles: %u\n", frame_counter, cycles);
+                Serial.printf("Game Boy Core 1: Frame %d, Cycles: %u\n", frame_counter, cycles);
             }
-            static unsigned long last_debug = 0;
-            auto const now = millis();
-            if (now - last_debug > 10000) {
-                Serial.printf("Free heap: %d bytes, Min free: %d bytes\n", 
-                             ESP.getFreeHeap(), ESP.getMinFreeHeap());
-                last_debug = now;
+            
+            // Signal frame completion to rendering task
+            uint32_t frame_signal = frame_counter;
+            xQueueSend(frameCompleteQueue, &frame_signal, 0); // Non-blocking
+        }
+        vTaskDelay(1); // Minimal delay to allow task switching
+    }
+}
+
+// Core 0: Rendering and system tasks (display, input, WiFi, SD)
+void rendering_task(void* pvParameters) {
+    Serial.println("Rendering task started on Core 0");
+    uint32_t last_frame = 0;
+    
+    while (1) {
+        if (current_state == APP_STATE_EMULATOR) {
+            uint32_t frame_signal;
+            
+            // Check for frame completion signals from emulation core
+            if (xQueueReceive(frameCompleteQueue, &frame_signal, pdMS_TO_TICKS(16)) == pdTRUE) {
+                // Frame completed, handle any display updates if needed
+                if (frame_signal != last_frame) {
+                    last_frame = frame_signal;
+                    
+                    // Optional: Handle any rendering-specific tasks here
+                    // The actual LCD rendering is handled in lcd.cpp via DMA
+                    
+                    static unsigned long last_debug = 0;
+                    auto const now = millis();
+                    if (now - last_debug > 10000) {
+                        Serial.printf("Rendering Core 0: Free heap: %d bytes, Min free: %d bytes\n", 
+                                     ESP.getFreeHeap(), ESP.getMinFreeHeap());
+                        last_debug = now;
+                    }
+                }
             }
         }
-        vTaskDelay(1); // Yield to other tasks
+        vTaskDelay(5); // Longer delay for rendering task
     }
 }
 
@@ -161,16 +204,46 @@ void setup() {
     Serial.println("Setup complete! Entering emulation...");
     delay(100); // Small delay to ensure everything is ready
 
-    // Start emulation task on core 1
-    xTaskCreatePinnedToCore(
+    // Create frame completion queue for inter-task communication
+    frameCompleteQueue = xQueueCreate(2, sizeof(uint32_t));
+    if (!frameCompleteQueue) {
+        Serial.println("Failed to create frame completion queue!");
+        while (1) delay(1000);
+    }
+
+    // Core affinity optimization according to improvement plan
+    Serial.println("Creating tasks with core affinity optimization...");
+    
+    // Core 1: Dedicated to emulation (CPU, memory, timers)
+    BaseType_t result1 = xTaskCreatePinnedToCore(
         emulation_task,        // Task function
-        "EmulationTask",      // Name
-        8192,                 // Stack size
+        "GB_Emulation",       // Name
+        8192,                 // Stack size (8KB for emulation)
         NULL,                 // Parameters
-        5,                    // Priority
+        6,                    // High priority for emulation
         &emulationTaskHandle, // Task handle
         1                     // Core 1
     );
+    
+    // Core 0: Dedicated to rendering and system tasks
+    BaseType_t result2 = xTaskCreatePinnedToCore(
+        rendering_task,       // Task function
+        "GB_Rendering",       // Name
+        4096,                 // Stack size (4KB for rendering)
+        NULL,                 // Parameters
+        4,                    // Lower priority for rendering
+        &renderingTaskHandle, // Task handle
+        0                     // Core 0
+    );
+    
+    if (result1 != pdPASS || result2 != pdPASS) {
+        Serial.println("Failed to create tasks with core affinity!");
+        while (1) delay(1000);
+    }
+    
+    Serial.println("Core affinity optimization complete:");
+    Serial.println("  Core 1: Game Boy emulation (CPU, memory, timers)");
+    Serial.println("  Core 0: Rendering and system tasks");
 }
 
 void initialize_emulator() {
@@ -179,31 +252,21 @@ void initialize_emulator() {
     }
     Serial.println("Initializing Game Boy emulator...");
 
+    // Initialize error handler first
+    ErrorHandler::init(&tft);
+
     // Load ROM from SD card using menu selection
     const char* rom_path = menu_get_rompath();
     if (!rom_path) {
-        Serial.println("[FATAL] No ROM selected or found on SD card.");
-        tft.fillScreen(TFT_RED);
-        tft.setTextColor(TFT_WHITE, TFT_RED);
-        tft.setTextSize(2);
-        tft.setCursor(20, 100);
-        tft.print("ERROR: No ROM found");
-        tft.setCursor(20, 130);
-        tft.print("Add .gb files to SD card");
-        while (1) delay(1000);
+        ErrorHandler::handle_error(EmulatorError::ROM_LOAD_FAILED, "No ROM selected");
+        return;
     }
+    
     Serial.printf("Loading ROM from SD: %s\n", rom_path);
     const uint8_t* rom = jolteon_load_rom(rom_path);
     if (!rom) {
-        Serial.println("[FATAL] Failed to load ROM from SD card.");
-        tft.fillScreen(TFT_RED);
-        tft.setTextColor(TFT_WHITE, TFT_RED);
-        tft.setTextSize(2);
-        tft.setCursor(20, 100);
-        tft.print("ERROR: ROM load failed");
-        tft.setCursor(20, 130);
-        tft.print("Check SD or ROM file");
-        while (1) delay(1000);
+        ErrorHandler::handle_error(EmulatorError::ROM_LOAD_FAILED, "ROM streaming failed");
+        return;
     }
     // Skip boot ROM to save memory
     const uint8_t* bootrom = nullptr;
@@ -246,10 +309,38 @@ void initialize_emulator() {
     cpu_init();
     
     emulator_initialized = true;
+    
+    // Print memory status to verify reasonable usage
+    print_memory_status();
+    
+    // Print ROM streaming statistics
+    rom_streamer.print_cache_stats();
+    
     Serial.println("Game Boy emulator initialized successfully!");
 }
 
 void loop() {
     // Empty: emulation runs in FreeRTOS task
     vTaskDelay(1000);
+}
+
+// Memory diagnostic function
+void print_memory_status() {
+    Serial.printf("=== Memory Status ===\n");
+    Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("Min free heap: %d bytes\n", ESP.getMinFreeHeap());
+    Serial.printf("Max alloc: %d bytes\n", ESP.getMaxAllocHeap());
+    Serial.printf("PSRAM free: 0 bytes (PSRAM disabled for CYD boards)\n");
+    
+    // Show memory savings from ROM streaming
+    if (rom_streamer.is_valid()) {
+        size_t rom_size = rom_streamer.get_size();
+        size_t cache_size = 4 * 16384; // 4 banks * 16KB each
+        Serial.printf("ROM size: %d bytes\n", rom_size);
+        Serial.printf("Cache size: %d bytes\n", cache_size);
+        Serial.printf("Memory saved: %d bytes (%.1f%%)\n", 
+                      rom_size - cache_size,
+                      ((float)(rom_size - cache_size) / rom_size) * 100.0f);
+    }
+    Serial.printf("====================\n");
 }
