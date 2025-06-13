@@ -1,6 +1,10 @@
 #ifndef MENU_H
 #define MENU_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     MENU_RESULT_CONTINUE,
     MENU_RESULT_START_GAME,
@@ -9,7 +13,16 @@ typedef enum {
 
 void menu_init();
 menu_result_t menu_loop();
-// menu_get_rompath returns the selected ROM file path from SD card
 const char* menu_get_rompath();
 
+#ifdef __cplusplus
+}
 #endif
+
+#ifdef __cplusplus
+namespace Platform {
+    class Menu;
+}
+#endif
+
+#endif // MENU_H

@@ -4,7 +4,10 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 
-#ifdef __cplusplus
+namespace Platform {
+    class Display;
+}
+
 class DisplayManager {
 private:
     TFT_eSPI& tft;
@@ -47,6 +50,5 @@ public:
     // Set the back buffer pointer
     void set_back_buffer(uint16_t* buffer) { back_buffer = buffer; }
 };
-#endif // __cplusplus
 
 #endif // DISPLAY_MANAGER_H

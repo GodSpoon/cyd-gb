@@ -66,6 +66,10 @@ static struct CPU c;
 static bool halt_bug;
 bool halted;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void cpu_init(void)
 {	
 	if (usebootrom) return;
@@ -1729,8 +1733,7 @@ uint32_t cpu_cycle(void)
 		case 0xA5:	/* AND L */
 			c.A &= c.L;
 			set_Z(!c.A);
-			set_H(1);
-			set_N(0);
+		 set_N(0);
 			set_C(0);
 			c.cycles += 1;
 		break;
@@ -1917,7 +1920,8 @@ uint32_t cpu_cycle(void)
 		break;
 		case 0xC4:	/* CALL NZ, imm16 */
 			if(flag_Z == 0)
-			{
+			
+		{
 				c.SP -= 2;
 				mem_write_word(c.SP, c.PC+2);
 				c.PC = mem_get_word(c.PC);
@@ -2271,3 +2275,7 @@ uint32_t cpu_cycle(void)
 	c.lastcycles = c.cycles;
 	return delta;
 }
+
+#ifdef __cplusplus
+}
+#endif

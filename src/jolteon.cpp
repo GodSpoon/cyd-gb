@@ -522,3 +522,209 @@ void jolteon_display_test_pattern(void)
         Serial.println("DisplayManager not initialized - cannot show test pattern");
     }
 }
+
+// Phase 2: Display Pipeline Optimization
+// 2.1 Simplified Framebuffer Management
+class DisplayPipeline {
+private:
+    uint16_t* framebuffer = nullptr;
+    bool use_dma = false;
+public:
+    bool init() {
+        // Allocate framebuffer for 160x144 Game Boy screen
+        if (!framebuffer) {
+            framebuffer = (uint16_t*)heap_caps_malloc(160 * 144 * sizeof(uint16_t), MALLOC_CAP_8BIT);
+        }
+        use_dma = false; // Set true if DMA is available and desired
+        return framebuffer != nullptr;
+    }
+    void render_scanline(uint8_t line, const uint8_t* pixel_data) {
+        if (!framebuffer || line >= 144) return;
+        uint16_t* fb_line = framebuffer + (line * 160);
+        for (int x = 0; x < 160; ++x) {
+            // Convert 8-bit pixel data to RGB565 (assume pixel_data[x] is palette index)
+            // You may want to use a palette lookup here
+            fb_line[x] = pixel_data[x];
+        }
+    }
+    void present_frame() {
+        // Present the framebuffer to the display
+        // Example: tft.pushImage(CENTER_X, CENTER_Y, 160, 144, framebuffer);
+        if (framebuffer) {
+            tft.pushImage(CENTER_X, CENTER_Y, 160, 144, framebuffer);
+        }
+    }
+    void clear() {
+        if (framebuffer) {
+            memset(framebuffer, 0, 160 * 144 * sizeof(uint16_t));
+        }
+    }
+    uint16_t* get_framebuffer() { return framebuffer; }
+    ~DisplayPipeline() {
+        if (framebuffer) heap_caps_free(framebuffer);
+    }
+};
+
+// 2.2 Optimized LCD Rendering
+// Remove complex queue system
+// Direct scanline rendering to framebuffer
+void lcd_render_scanline_direct(uint8_t line, const uint8_t* pixel_data, DisplayPipeline& pipeline) {
+    pipeline.render_scanline(line, pixel_data);
+}
+
+// Phase 3: Architecture Improvements
+// 3.1 Error Handling Strategy
+enum class EmulatorError {
+    SUCCESS,
+    MEMORY_ERROR,
+    ROM_ERROR,
+    DISPLAY_ERROR,
+    SD_ERROR
+};
+
+class ErrorHandler {
+public:
+    static void handle_error(EmulatorError error, const char* context) {
+        switch (error) {
+            case EmulatorError::SUCCESS:
+                Serial.println("[OK] No error.");
+                break;
+            case EmulatorError::MEMORY_ERROR:
+                Serial.printf("[MEMORY ERROR] Context: %s\n", context);
+                display_error_screen("Memory allocation failed!");
+                break;
+            case EmulatorError::ROM_ERROR:
+                Serial.printf("[ROM ERROR] Context: %s\n", context);
+                display_error_screen("ROM loading failed!");
+                break;
+            case EmulatorError::DISPLAY_ERROR:
+                Serial.printf("[DISPLAY ERROR] Context: %s\n", context);
+                display_error_screen("Display error!");
+                break;
+            case EmulatorError::SD_ERROR:
+                Serial.printf("[SD ERROR] Context: %s\n", context);
+                display_error_screen("SD card error!");
+                break;
+        }
+    }
+    static void display_error_screen(const char* message) {
+        if (display_mgr) {
+            display_mgr->display_error(message);
+        } else {
+            tft.fillScreen(TFT_RED);
+            tft.setTextColor(TFT_WHITE, TFT_RED);
+            tft.setTextSize(2);
+            tft.setCursor(20, 100);
+            tft.print("ERROR:");
+            tft.setCursor(20, 130);
+            tft.print(message);
+        }
+    }
+    static bool attempt_recovery(EmulatorError error) {
+        // Simple stub: always return false for now
+        // Could implement memory cleanup, SD card reinit, etc.
+        Serial.printf("Attempting recovery from error: %d\n", (int)error);
+        return false;
+    }
+};
+
+// 3.2 Configuration Management
+struct EmulatorConfig {
+    bool use_psram;
+    bool enable_sound;
+    uint8_t frameskip;
+    bool debug_mode;
+
+    static EmulatorConfig detect_optimal() {
+        EmulatorConfig cfg;
+        cfg.use_psram = (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) > 0);
+        cfg.enable_sound = true; // Could check hardware
+        cfg.frameskip = 0; // Default, could tune based on performance
+        cfg.debug_mode = false;
+        return cfg;
+    }
+};
+
+// 3.3 Task Coordination
+class TaskManager {
+private:
+    TaskHandle_t emulation_task_handle = nullptr;
+    TaskHandle_t display_task_handle = nullptr;
+    QueueHandle_t frame_queue = nullptr;
+public:
+    bool init() {
+        // Create a queue for frame pointers (or frame numbers)
+        frame_queue = xQueueCreate(2, sizeof(void*));
+        return frame_queue != nullptr;
+    }
+    static void emulation_task(void* param) {
+        // Main emulation loop (stub)
+        while (1) {
+            // Emulate CPU, run frame, etc.
+            vTaskDelay(1);
+        }
+    }
+    static void display_task(void* param) {
+        // Main display loop (stub)
+        while (1) {
+            // Handle display refresh, etc.
+            vTaskDelay(1);
+        }
+    }
+    // 4.1 CPU Core Affinity
+    // Core 0: System tasks, WiFi, display
+    // Core 1: Game Boy CPU emulation
+    void setup_core_affinity() {
+        // Correct usage: pass function pointer as first argument, TaskHandle_t* as sixth argument
+        xTaskCreatePinnedToCore(TaskManager::emulation_task, "GB_CPU", 8192, NULL, 5, &emulation_task_handle, 1);
+        xTaskCreatePinnedToCore(TaskManager::display_task, "Display", 4096, NULL, 4, &display_task_handle, 0);
+    }
+    void start_emulation() {
+        setup_core_affinity();
+        Serial.println("Emulation and display tasks started with core affinity");
+    }
+    void stop_emulation() {
+        // Stop tasks (stub)
+        Serial.println("Emulation task stopped (stub)");
+    }
+};
+
+// 4.2 Memory Access Optimization
+// Use IRAM for frequently called functions
+extern "C" {
+    IRAM_ATTR uint8_t cpu_cycle_fast();
+    IRAM_ATTR void lcd_write_pixel_fast(uint16_t x, uint16_t y, uint16_t color);
+}
+
+// 4.3 Frame Timing
+class FrameTimer {
+private:
+    uint32_t target_frame_time_us = 16742; // 59.7 FPS
+    uint32_t last_frame_time = 0;
+    float fps = 0.0f;
+    uint32_t frame_count = 0;
+    uint32_t last_fps_update = 0;
+public:
+    FrameTimer() {
+        last_frame_time = micros();
+        last_fps_update = millis();
+    }
+    void wait_for_next_frame() {
+        uint32_t now = micros();
+        uint32_t elapsed = now - last_frame_time;
+        if (elapsed < target_frame_time_us) {
+            ets_delay_us(target_frame_time_us - elapsed);
+        }
+        last_frame_time = micros();
+        frame_count++;
+        uint32_t ms_now = millis();
+        if (ms_now - last_fps_update >= 1000) {
+            fps = (float)frame_count * 1000.0f / (ms_now - last_fps_update);
+            frame_count = 0;
+            last_fps_update = ms_now;
+        }
+    }
+    float get_fps() {
+        return fps;
+    }
+};

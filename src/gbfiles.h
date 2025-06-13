@@ -1,5 +1,9 @@
-#ifndef INTERNAL_H
-#define INTERNAL_H
+#ifndef GBFILES_H
+#define GBFILES_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #include <stdint.h>
 #ifndef __cplusplus
@@ -28,4 +32,14 @@
 	const uint32_t gb_border_size = 0;
 #endif
 
+#ifdef __cplusplus
+}
 #endif
+
+#ifdef __cplusplus
+namespace GameBoy {
+    // Future: GameBoy-specific declarations
+}
+#endif
+
+#endif // GBFILES_H

@@ -1,6 +1,10 @@
 #ifndef LCD_H
 #define LCD_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 
 bool lcd_init(void);
@@ -19,4 +23,14 @@ void lcd_set_window_y(uint8_t);
 void lcd_set_window_x(uint8_t);
 void lcd_set_ly_compare(uint8_t);
 
+#ifdef __cplusplus
+}
 #endif
+
+#ifdef __cplusplus
+namespace GameBoy {
+    class LCD;
+}
+#endif
+
+#endif // LCD_H

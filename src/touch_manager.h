@@ -51,4 +51,20 @@ public:
 
 #endif // __cplusplus
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// C-compatible code can be placed here
+
+#ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
+namespace Platform {
+    class Input;
+}
+#endif
+
 #endif // TOUCH_MANAGER_H
