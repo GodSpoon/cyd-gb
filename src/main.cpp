@@ -366,7 +366,8 @@ void initialize_emulator() {
         while (1) delay(1000);
     }
     // Initialize ROM early to avoid fragmentation
-    if (!rom_init(rom)) {
+    // For ROM streaming, pass nullptr to rom_init since actual ROM data is accessed via rom_streamer
+    if (!rom_init(nullptr)) {
         Serial.println("rom_init failed - emulator cannot start");
         while(1) delay(1000);
     }

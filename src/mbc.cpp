@@ -61,11 +61,12 @@ bool mbc_init()
 	yield();
 	
 	rom = rom_getbytes();
-	if (!rom) {
-		Serial.println("mbc_init: Failed to get ROM bytes");
+	// In ROM streaming mode, rom can be nullptr since data is accessed via rom_streamer
+	if (!rom && !rom_streamer.is_valid()) {
+		Serial.println("mbc_init: Failed to get ROM bytes and ROM streamer is invalid");
 		return false;
 	}
-	Serial.printf("mbc_init: ROM loaded at %p\n", rom);
+	Serial.printf("mbc_init: ROM pointer at %p (streaming mode: %s)\n", rom, rom_streamer.is_valid() ? "enabled" : "disabled");
 	
 	rominfo = rom_get_info();
 	if (!rominfo) {
