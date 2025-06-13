@@ -1,9 +1,9 @@
 #include "error_handler.h"
 
-TFT_eSPI* ErrorHandler::display = nullptr;
+IDisplay* ErrorHandler::display = nullptr;
 
-void ErrorHandler::init(TFT_eSPI* tft) {
-    display = tft;
+void ErrorHandler::init(IDisplay* display_interface) {
+    display = display_interface;
 }
 
 void ErrorHandler::handle_error(EmulatorError error, const char* context) {
@@ -44,8 +44,8 @@ void ErrorHandler::handle_error(EmulatorError error, const char* context) {
 void ErrorHandler::display_error_screen(const char* title, const char* message, const char* suggestion) {
     if (!display) return;
     
-    display->fillScreen(TFT_RED);
-    display->setTextColor(TFT_WHITE, TFT_RED);
+    display->fillScreen(0xF800); // Red (RGB565)
+    display->setTextColor(0xFFFF); // White (RGB565)
     
     display->setTextSize(3);
     display->setCursor(50, 30);
@@ -62,7 +62,7 @@ void ErrorHandler::display_error_screen(const char* title, const char* message, 
     }
     
     display->setTextSize(1);
-    display->setTextColor(TFT_YELLOW, TFT_RED);
+    display->setTextColor(0xFFE0); // Yellow (RGB565)
     display->setCursor(20, 220);
     display->print("Press RESET button to restart");
 }

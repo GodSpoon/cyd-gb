@@ -8,10 +8,8 @@
 #include "jolteon.h"
 #include "mem.h"
 #include "core/framebuffer_manager.h"
-#include "display_manager.h"
 
-extern FramebufferManager framebuffer_manager;
-extern DisplayManager* get_display_manager(); // Forward declaration
+static FramebufferManager* g_framebuffer_manager = nullptr;
 
 #define MODE2_BOUNDS 	(204/4)
 #define MODE3_BOUNDS 	(284/4)
@@ -345,14 +343,8 @@ static void render_line(void *arg)
         struct sprite s[10];
         lcd_set_palettes(cline);
         
-        // Try to get back buffer from DisplayManager first, fallback to framebuffer_manager
-        fbuffer_t* b = nullptr;
-        DisplayManager* display_mgr = get_display_manager();
-        if (display_mgr && display_mgr->get_back_buffer()) {
-            b = display_mgr->get_back_buffer();
-        } else {
-            b = framebuffer_manager.get_back_buffer();
-        }
+        // Get back buffer from injected framebuffer_manager
+        fbuffer_t* b = g_framebuffer_manager ? g_framebuffer_manager->get_back_buffer() : nullptr;
         
         // Add debug check for null framebuffer
         if (!b) {
@@ -374,15 +366,8 @@ static void render_line(void *arg)
             if (skip_frames) {
                 --skip_frames;
             } else {
-                // Use DisplayManager's non-blocking swap_buffers for better performance
-                if (display_mgr) {
-                    if (!display_mgr->try_swap_buffers()) {
-                        // DMA was busy, frame was skipped - this is OK for performance
-                        // Serial.println("Frame skipped - DMA busy");
-                    }
-                } else {
-                    jolteon_end_frame(); // Fallback to original method
-                }
+                // Render the completed frame
+                jolteon_end_frame();
             }
         }
     }
@@ -477,4 +462,8 @@ bool lcd_init()
 	xTaskCreatePinnedToCore(&render_line, "renderScanline", 4096, NULL, 5, NULL, 0);
 	
 	return true;
+}
+
+void lcd_set_framebuffer_manager(FramebufferManager* fbmgr) {
+    g_framebuffer_manager = fbmgr;
 }

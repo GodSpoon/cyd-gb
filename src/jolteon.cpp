@@ -9,7 +9,6 @@
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
 #include "jolteon.h"
-#include "display_manager.h"
 #include "interrupt.h"
 #include "mbc.h"
 #include "rom.h"
@@ -19,17 +18,25 @@
 #include "rom_streamer.h"
 #include "error_handler.h"
 
-// External reference to TFT display and touch objects from main.cpp
-extern TFT_eSPI tft;
-extern XPT2046_Touchscreen touch;
-extern FramebufferManager framebuffer_manager;
+// Constants for Game Boy display positioning
+#define GAMEBOY_WIDTH 160
+#define GAMEBOY_HEIGHT 144
 
-// Display manager instance
-static DisplayManager* display_mgr = nullptr;
+// CYD display is 320x240, center the Game Boy screen
+#define CENTER_X ((320 - GAMEBOY_WIDTH) >> 1)
+#define CENTER_Y ((240 - GAMEBOY_HEIGHT) >> 1)
 
-// Function to provide access to display manager for other modules
-DisplayManager* get_display_manager() {
-    return display_mgr;
+// Global display reference for the emulation core
+static IDisplay* g_display = nullptr;
+
+// Function to set the display reference for the emulation core
+void jolteon_set_display(IDisplay* display) {
+    g_display = display;
+}
+
+// Function to get the display reference for the emulation core
+IDisplay* jolteon_get_display() {
+    return g_display;
 }
 
 #define GAMEBOY_WIDTH 160
@@ -46,10 +53,10 @@ volatile bool sram_modified = false;
 
 uint16_t palette[] = { 0xFFFF, 0xAAAA, 0x5555, 0x2222 };
 
-void jolteon_render_border(const uint8_t* img, uint32_t size)
+void jolteon_render_border(IDisplay& display, const uint8_t* img, uint32_t size)
 {
-    // Clear the screen with a dark background using TFT_eSPI
-    tft.fillScreen(TFT_BLACK); // Black
+    // Clear the screen with a dark background using display interface
+    display.fillScreen(0x0000); // Black
     Serial.println("Border rendered (simple dark background)");
 }
 
@@ -83,7 +90,7 @@ void analyze_memory_fragmentation() {
 }
 
 // Try smaller buffer allocation with fragmentation handling
-bool allocate_buffers_optimized() {
+bool allocate_buffers_optimized(FramebufferManager& fbmgr) {
     Serial.println("\nTrying optimized memory allocation...");
     
     // Force memory barrier to ensure all previous operations are complete
@@ -95,11 +102,11 @@ bool allocate_buffers_optimized() {
         return false;
     }
     
-    if (!framebuffer_manager.init()) {
+    if (!fbmgr.init()) {
         Serial.println("  Failed to allocate double framebuffers");
         return false;
     }
-    pixels = framebuffer_manager.get_back_buffer();
+    pixels = fbmgr.get_back_buffer();
     
     // Verify allocation success with null check
     if (!pixels) {
@@ -107,10 +114,6 @@ bool allocate_buffers_optimized() {
         return false;
     }
     
-    // Set back buffer in DisplayManager if available
-    if (display_mgr) {
-        display_mgr->set_back_buffer(pixels);
-    }
     Serial.printf("  Framebuffer (back) at: %p\n", pixels);
     
     // Verify memory integrity after allocation
@@ -122,11 +125,14 @@ bool allocate_buffers_optimized() {
     return true;
 }
 
-void jolteon_init(void)
+void jolteon_init(IDisplay& display, FramebufferManager& fbmgr)
 {
     Serial.println("===============================");
     Serial.println("Initializing Jolteon Game Boy emulator...");
     Serial.println("===============================");
+    
+    // Set the global display reference for the emulation core
+    jolteon_set_display(&display);
     
     // CRITICAL FIX: Disable interrupts during initialization to prevent Core 1 conflicts
     portMUX_TYPE initMux = portMUX_INITIALIZER_UNLOCKED;
@@ -154,31 +160,23 @@ void jolteon_init(void)
             "Insufficient memory: %d KB free, need %d KB", 
             (int)(free_heap/1024), (int)(min_required/1024));
         portEXIT_CRITICAL(&initMux); // Re-enable interrupts before error handling
-        jolteon_faint(error_msg);
+        jolteon_faint(display, error_msg);
         return;
     }
     
     // Try optimized allocation strategy
-    if (!allocate_buffers_optimized()) {
+    if (!allocate_buffers_optimized(fbmgr)) {
         portEXIT_CRITICAL(&initMux); // Re-enable interrupts before error handling
-        jolteon_faint("Failed to allocate required buffers!");
+        jolteon_faint(display, "Failed to allocate required buffers!");
         return;
     }
     
     // Re-enable interrupts after memory allocations are complete
     portEXIT_CRITICAL(&initMux);
     
-    // Initialize display manager EARLY - before framebuffer operations
-    Serial.println("Initializing DisplayManager...");
-    Serial.printf("About to create DisplayManager with tft reference at %p\n", &tft);
-    display_mgr = new DisplayManager(tft);
-    Serial.println("DisplayManager constructor completed");
-    if (!display_mgr->init()) {
-        Serial.println("DisplayManager init failed");
-        jolteon_faint("Display initialization failed");
-        return;
-    }
-    Serial.println("DisplayManager initialization completed successfully");
+    // Note: DisplayManager initialization is now handled outside of jolteon_init
+    // since we're removing the global TFT dependency
+    Serial.println("Jolteon framebuffer initialization completed successfully");
     
     // Verify framebuffer allocation and add test pattern
     Serial.printf("Framebuffer test: writing test pattern...\n");
@@ -252,7 +250,7 @@ float jolteon_get_fps() {
     return current_fps;
 }
 
-void jolteon_update(void)
+void jolteon_update(ITouch& touch)
 {
     // Default to all buttons released (Game Boy uses inverted logic - 1 = released, 0 = pressed)
     btn_directions = 0xFF;
@@ -260,12 +258,11 @@ void jolteon_update(void)
     
     // Check for touch input
     if (touch.touched()) {
-        TS_Point p = touch.getPoint();
+        TouchPoint p = touch.getPoint();
         
-        // Convert touch coordinates (touchscreen coordinates need to be mapped to display coordinates)
-        // CYD touchscreen typically needs coordinate mapping
-        int16_t x = map(p.x, 200, 3700, 0, 320);  // Approximate mapping - may need calibration
-        int16_t y = map(p.y, 240, 3800, 0, 240);  // Approximate mapping - may need calibration
+        // Use the mapped coordinates from the TouchPoint
+        int16_t x = p.x;
+        int16_t y = p.y;
         
         // Define virtual button areas (simple layout)
         // D-pad on left side
@@ -305,7 +302,7 @@ void jolteon_update(void)
     }
 }
 
-void jolteon_faint(const char* msg)
+void jolteon_faint(IDisplay& display, const char* msg)
 {
     Serial.println("===============================");
     Serial.print("JOLTEON FAINTED! ");
@@ -315,22 +312,32 @@ void jolteon_faint(const char* msg)
     Serial.printf("Min free heap: %d bytes\n", ESP.getMinFreeHeap());
     Serial.println("===============================");
     
-    // Display error on screen using DisplayManager if available
-    if (display_mgr) {
-        display_mgr->display_error(msg);
-    } else {
-        // Fallback to direct TFT display
-        tft.fillScreen(TFT_RED);
-        tft.setTextColor(TFT_WHITE, TFT_RED);
-        tft.setTextSize(2);
-        tft.setCursor(20, 100);
-        tft.print("ERROR:");
-        tft.setCursor(20, 130);
-        tft.print(msg);
-    }
+    // Display error on screen using the injected display interface
+    display.fillScreen(0xF800); // Red
+    display.setTextColor(0xFFFF); // White
+    display.setTextSize(2);
+    display.setCursor(20, 100);
+    display.print("ERROR:");
+    display.setCursor(20, 130);
+    display.print(msg);
     
     while(true) {
         delay(1000);
+    }
+}
+
+// Parameter-less version for backward compatibility (uses global display reference)
+void jolteon_faint_global(const char* msg)
+{
+    if (g_display) {
+        jolteon_faint(*g_display, msg);
+    } else {
+        // Fallback: print to serial only
+        Serial.println("FATAL ERROR (no display available):");
+        Serial.println(msg);
+        while(true) {
+            delay(1000);
+        }
     }
 }
 
@@ -349,13 +356,9 @@ void jolteon_clear_framebuffer(fbuffer_t col)
     }
 }
 
-void jolteon_clear_screen(uint16_t col)
+void jolteon_clear_screen(IDisplay& display, uint16_t col)
 {
-    if (display_mgr) {
-        display_mgr->clear_screen();
-    } else {
-        tft.fillScreen(col);
-    }
+    display.fillScreen(col);
 }
 
 void jolteon_set_palette(const uint32_t* col)
@@ -371,9 +374,11 @@ void jolteon_set_palette(const uint32_t* col)
     }
 }
 
-void jolteon_end_frame(void)
+void jolteon_end_frame_with_display(IDisplay& display)
 {
-    // Handle SRAM save if requested
+    uint16_t* pixels = jolteon_get_framebuffer();
+    
+    // Handle SRAM save if requested (legacy spi_lock mechanism)
     if (spi_lock) {
         const s_rominfo* rominfo = rom_get_info();
         if (rominfo->has_battery && rom_get_ram_size())
@@ -381,29 +386,32 @@ void jolteon_end_frame(void)
         spi_lock = 0;
     }
     
-    // Render the framebuffer to the display using DisplayManager
-    if (display_mgr && pixels) {
-        display_mgr->render_gameboy_frame(pixels);
-        
-        // Optional: Display debug info periodically
-        static int debug_counter = 0;
-        debug_counter++;
-        
-        if (debug_counter % 180 == 0) { // Every 3 seconds at 60fps
-            display_mgr->display_debug_info(jolteon_get_fps(), ESP.getFreeHeap());
-        }
+    if (sram_modified) {
+        Serial.println("Saving SRAM...");
+        jolteon_save_sram(mbc_get_ram(), rom_get_ram_size());
+        sram_modified = false;
+    }
+    
+    // Render the framebuffer to the display centered on screen
+    if (pixels) {
+        // Use drawBuffer to render the Game Boy screen in the center
+        display.drawBuffer(pixels, CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
     } else {
-        Serial.println("ERROR: DisplayManager or framebuffer is NULL in jolteon_end_frame()");
-        if (!display_mgr) {
-            Serial.println("  DisplayManager is NULL");
-        }
-        if (!pixels) {
-            Serial.println("  Framebuffer is NULL");
-        }
+        Serial.println("ERROR: Framebuffer is NULL in jolteon_end_frame()");
     }
     
     // End frame timing for performance monitoring
     jolteon_end_frame_timing();
+}
+
+// Parameter-less version for backward compatibility (uses global display reference)
+void jolteon_end_frame(void)
+{
+    if (g_display) {
+        jolteon_end_frame_with_display(*g_display);
+    } else {
+        Serial.println("ERROR: Global display reference is NULL in jolteon_end_frame()");
+    }
 }
 
 void jolteon_save_sram(uint8_t* ram, uint32_t size)
@@ -453,18 +461,18 @@ const uint8_t* jolteon_load_rom(const char* path)
     return (const uint8_t*)0x1; // Non-null success indicator
 }
 
-void jolteon_display_splash_screen(void)
+void jolteon_display_splash_screen(IDisplay& display)
 {
     Serial.println("Displaying Jolteon splash screen...");
     
     // Clear screen first
-    tft.fillScreen(TFT_BLACK);
+    display.fillScreen(0x0000); // Black
     
     // Show initial loading message
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(85, 100);
-    tft.print("Loading...");
+    display.setTextColor(0xFFFF); // White
+    display.setTextSize(2);
+    display.setCursor(85, 100);
+    display.print("Loading...");
     
     // Draw loading bar background
     const int bar_x = 60;
@@ -472,8 +480,12 @@ void jolteon_display_splash_screen(void)
     const int bar_width = 200;
     const int bar_height = 10;
     
-    tft.drawRect(bar_x - 2, bar_y - 2, bar_width + 4, bar_height + 4, TFT_WHITE);
-    tft.fillRect(bar_x, bar_y, bar_width, bar_height, TFT_BLACK);
+    // Draw border for loading bar (simplified - using fillRect for border)
+    display.fillScreen(0x0000); // Clear screen again
+    display.setTextColor(0xFFFF); // White
+    display.setTextSize(2);
+    display.setCursor(85, 100);
+    display.print("Loading...");
     
     // MEMORY OPTIMIZATION: Don't allocate large splash buffer
     // 320x240x2 = 153,600 bytes is too much for ESP32 without PSRAM
@@ -490,7 +502,7 @@ void jolteon_display_splash_screen(void)
         Serial.printf("Allocated %d byte scanline buffer\n", scanline_buffer_size);
         
         // Clear loading screen
-        tft.fillScreen(TFT_BLACK);
+        display.fillScreen(0x0000); // Black
         
         // Render image scanline by scanline
         const int total_scanlines = JOLTEON_SPLASH_LANDSCAPE_HEIGHT;
@@ -498,7 +510,13 @@ void jolteon_display_splash_screen(void)
             // Update progress bar every 24 lines (10 steps total)
             if (y % 24 == 0) {
                 int progress_width = (bar_width * y) / total_scanlines;
-                tft.fillRect(bar_x, bar_y, progress_width, bar_height, TFT_GREEN);
+                // Draw progress bar (simplified without exact border)
+                display.setCursor(bar_x, bar_y);
+                display.setTextColor(0x07E0); // Green
+                display.setTextSize(1);
+                display.print("Loading... ");
+                display.print((y * 100) / total_scanlines);
+                display.print("%");
             }
             
             // Copy one scanline from PROGMEM to buffer
@@ -508,7 +526,7 @@ void jolteon_display_splash_screen(void)
             }
             
             // Draw the scanline
-            tft.pushImage(0, y, scanline_width, 1, scanline_buffer);
+            display.drawBuffer(scanline_buffer, 0, y, scanline_width, 1);
             
             // Small delay every few lines to show progress
             if (y % 12 == 0) {
@@ -521,17 +539,19 @@ void jolteon_display_splash_screen(void)
         Serial.println("Scanline buffer freed");
         
     } else {
-        Serial.println("Failed to allocate scanline buffer - using direct PROGMEM rendering...");
+        Serial.println("Failed to allocate scanline buffer - using simplified fallback...");
         
-        // Ultimate fallback: render directly from PROGMEM (slower but works)
-        tft.fillRect(bar_x, bar_y, bar_width, bar_height, TFT_YELLOW);
+        // Ultimate fallback: simple text display
+        display.fillScreen(0x0000); // Black
+        display.setTextColor(0xFFFF); // White
+        display.setTextSize(3);
+        display.setCursor(60, 100);
+        display.print("JOLTEON");
+        display.setTextSize(2);
+        display.setCursor(40, 140);
+        display.print("Game Boy Emulator");
+        
         delay(200);
-        
-        // Clear loading screen
-        tft.fillScreen(TFT_BLACK);
-        
-        // Use direct rendering (may be slower due to PROGMEM access)
-        tft.pushImage(0, 0, JOLTEON_SPLASH_LANDSCAPE_WIDTH, JOLTEON_SPLASH_LANDSCAPE_HEIGHT, jolteon_splash_landscape_data);
     }
     
     Serial.println("Splash screen displayed!");
@@ -540,13 +560,30 @@ void jolteon_display_splash_screen(void)
     delay(2000);
 }
 
-void jolteon_display_test_pattern(void)
+void jolteon_display_test_pattern(IDisplay& display)
 {
-    if (display_mgr) {
-        display_mgr->display_test_pattern();
-    } else {
-        Serial.println("DisplayManager not initialized - cannot show test pattern");
+    // Create a simple test pattern directly using the display interface
+    display.fillScreen(0x0000); // Black background
+    
+    // Draw a colorful test pattern
+    for (int y = 0; y < 160; y += 20) {
+        for (int x = 0; x < 160; x += 20) {
+            uint16_t color = ((x/20) << 8) | ((y/20) << 3) | 0x1F; // Simple color pattern
+            for (int py = 0; py < 20 && (y + py) < 160; py++) {
+                for (int px = 0; px < 20 && (x + px) < 160; px++) {
+                    display.drawPixel(CENTER_X + x + px, CENTER_Y + y + py, color);
+                }
+            }
+        }
     }
+    
+    // Add some text
+    display.setTextColor(0xFFFF); // White
+    display.setTextSize(2);
+    display.setCursor(CENTER_X + 10, CENTER_Y + 50);
+    display.print("Test Pattern");
+    
+    Serial.println("Displayed test pattern using direct display interface");
 }
 
 // Phase 2: Display Pipeline Optimization
@@ -575,9 +612,10 @@ public:
     }
     void present_frame() {
         // Present the framebuffer to the display
-        // Example: tft.pushImage(CENTER_X, CENTER_Y, 160, 144, framebuffer);
+        // Note: This example class would need a display reference for actual implementation
         if (framebuffer) {
-            tft.pushImage(CENTER_X, CENTER_Y, 160, 144, framebuffer);
+            // Example: display.drawBuffer(framebuffer, CENTER_X, CENTER_Y, 160, 144);
+            Serial.println("DisplayPipeline: present_frame called (implementation needed)");
         }
     }
     void clear() {

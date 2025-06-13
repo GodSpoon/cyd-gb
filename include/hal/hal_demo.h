@@ -98,17 +98,25 @@
 
 /**
  * Simple demo function that can be called from main.cpp to test HAL
+ * @param display Display interface reference
+ * @param touch Touch interface reference
  */
-void run_hal_demo();
+void run_hal_demo(IDisplay& display, ITouch& touch);
 
 /**
  * Advanced demo showing complete HAL integration
+ * @param display Display interface reference
+ * @param touch Touch interface reference
+ * @param storage Storage interface reference
  */
-void run_hal_integration_demo();
+void run_hal_integration_demo(IDisplay& display, ITouch& touch, IStorage& storage);
 
 /**
  * Test function for validating HAL interfaces
+ * @param display Display interface reference
+ * @param touch Touch interface reference
+ * @param storage Storage interface reference
  */
-bool test_hal_interfaces();
+bool test_hal_interfaces(IDisplay& display, ITouch& touch, IStorage& storage);
 
 #endif // HAL_DEMO_H

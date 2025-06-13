@@ -1,18 +1,8 @@
 #include <Arduino.h>
-#include <TFT_eSPI.h>
-#include <XPT2046_Touchscreen.h>
 #include "menu.h"
-#include "touch_manager.h"
 #include <SD.h>
 #include <vector>
 #include <string>
-
-// External references to display and touch from main.cpp
-extern TFT_eSPI tft;
-extern XPT2046_Touchscreen touch;
-
-// Touch manager instance
-static TouchManager* touch_mgr = nullptr;
 
 // Menu state
 static bool menu_initialized = false;
@@ -21,17 +11,15 @@ static int menu_selection = 0;
 static String selected_rom_path = "";
 static std::vector<String> rom_files;
 
-// Menu colors
-#define MENU_BG_COLOR     TFT_BLACK
-#define MENU_TEXT_COLOR   TFT_WHITE
-#define MENU_SELECT_COLOR TFT_YELLOW
-#define MENU_TITLE_COLOR  TFT_CYAN
+// Menu colors (RGB565 values)
+#define MENU_BG_COLOR     0x0000  // Black
+#define MENU_TEXT_COLOR   0xFFFF  // White
+#define MENU_SELECT_COLOR 0xFFE0  // Yellow
+#define MENU_TITLE_COLOR  0x07FF  // Cyan
 
-void menu_init() {
+void menu_init(IDisplay& display, ITouch& touch) {
     Serial.println("Menu: Initializing...");
-    if (!touch_mgr) {
-        touch_mgr = new TouchManager(touch);
-    }
+    
     // Scan SD card for .gb files
     rom_files.clear();
     File root = SD.open("/");
@@ -49,44 +37,47 @@ void menu_init() {
     if (rom_files.empty()) {
         rom_files.push_back("No ROMs found");
     }
+    
     // Clear screen
-    tft.fillScreen(MENU_BG_COLOR);
+    display.fillScreen(MENU_BG_COLOR);
     
     // Draw title
-    tft.setTextColor(MENU_TITLE_COLOR);
-    tft.setTextSize(3);
-    tft.setCursor(60, 20);
-    tft.println("CYD-GB");
+    display.setTextColor(MENU_TITLE_COLOR);
+    display.setTextSize(3);
+    display.setCursor(60, 20);
+    display.print("CYD-GB");
     
-    tft.setTextColor(TFT_WHITE);
-    tft.setTextSize(2);
-    tft.setCursor(40, 60);
-    tft.println("Game Boy Emulator");
+    display.setTextColor(MENU_TEXT_COLOR);
+    display.setTextSize(2);
+    display.setCursor(40, 60);
+    display.print("Game Boy Emulator");
     
     // Draw menu options
-    tft.setTextSize(2);
+    display.setTextSize(2);
     int y = 120;
     for (size_t i = 0; i < rom_files.size(); ++i) {
-        tft.setCursor(40, y);
-        tft.setTextColor(menu_selection == (int)i ? MENU_SELECT_COLOR : MENU_TEXT_COLOR);
-        tft.printf("%s%s", menu_selection == (int)i ? "> " : "  ", rom_files[i].c_str());
+        display.setCursor(40, y);
+        display.setTextColor(menu_selection == (int)i ? MENU_SELECT_COLOR : MENU_TEXT_COLOR);
+        const char* prefix = menu_selection == (int)i ? "> " : "  ";
+        display.print(prefix);
+        display.print(rom_files[i].c_str());
         y += 30;
     }
     
     // Instructions
-    tft.setTextColor(TFT_LIGHTGREY);
-    tft.setTextSize(1);
-    tft.setCursor(40, 220);
-    tft.println("Touch to select, tap highlighted item to choose");
+    display.setTextColor(0x8410); // Light grey (RGB565)
+    display.setTextSize(1);
+    display.setCursor(40, 220);
+    display.print("Touch to select, tap highlighted item to choose");
     
     menu_initialized = true;
     last_update = millis();
     Serial.println("Menu: Initialized successfully");
 }
 
-menu_result_t menu_loop() {
+menu_result_t menu_update(IDisplay& display, ITouch& touch) {
     if (!menu_initialized) {
-        menu_init();
+        menu_init(display, touch);
         return MENU_RESULT_CONTINUE;
     }
     // Throttle updates
@@ -99,8 +90,8 @@ menu_result_t menu_loop() {
     static bool was_touching = false;
     static int last_selection = -1;
 
-    TouchManager::TouchPoint tp = touch_mgr->get_touch();
-    bool touching = tp.valid;
+    bool touching = touch.touched();
+    TouchPoint tp = touch.getPoint();
 
     // Determine which menu row is being touched
     int touched_selection = -1;
@@ -115,7 +106,7 @@ menu_result_t menu_loop() {
     // Update menu selection if touch is on a menu row
     if (touched_selection != -1 && touched_selection != menu_selection) {
         menu_selection = touched_selection;
-        menu_init(); // Redraw menu only if selection changed
+        menu_init(display, touch); // Redraw menu only if selection changed
     }
 
     // Detect tap (touch release) on the currently selected item

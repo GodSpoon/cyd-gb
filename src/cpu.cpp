@@ -4,7 +4,13 @@
 #include "jolteon.h"
 #include "core/framebuffer_manager.h"
 
-extern FramebufferManager framebuffer_manager;
+// Static reference to framebuffer manager (set via cpu_set_framebuffer_manager)
+static FramebufferManager* g_framebuffer_manager = nullptr;
+
+// Setter function to inject framebuffer manager dependency
+void cpu_set_framebuffer_manager(FramebufferManager* fbmgr) {
+    g_framebuffer_manager = fbmgr;
+}
 
 /* 16-bit mode */
 #define set_HL(x) do {uint32_t macro = (x); c.L = macro&0xFF; c.H = macro>>8;} while(0)
@@ -2283,7 +2289,7 @@ uint32_t cpu_cycle(void)
 		default: {
 			static char errstr[50];
 			sprintf(errstr, "Unhandled opcode: %02X at %04X.", b, c.PC);
-			jolteon_faint(errstr);
+			jolteon_faint_global(errstr);
 		}
 		break;
 	}

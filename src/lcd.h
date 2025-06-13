@@ -7,6 +7,11 @@ extern "C" {
 
 #include <stdint.h>
 
+// Forward declaration for C++ classes
+#ifdef __cplusplus
+class FramebufferManager;
+#endif
+
 bool lcd_init(void);
 void lcd_cycle(uint32_t);
 void lcd_reset(void);
@@ -22,6 +27,11 @@ void lcd_write_spr_palette2(uint8_t);
 void lcd_set_window_y(uint8_t);
 void lcd_set_window_x(uint8_t);
 void lcd_set_ly_compare(uint8_t);
+
+// Dependency injection for framebuffer manager
+#ifdef __cplusplus
+void lcd_set_framebuffer_manager(FramebufferManager* fbmgr);
+#endif
 
 #ifdef __cplusplus
 }

@@ -51,7 +51,13 @@ MBCReader mbc_read_ram;
 MBCWriter mbc_write_rom;
 MBCWriter mbc_write_ram;
 
-extern FramebufferManager framebuffer_manager;
+// Static reference to framebuffer manager (set via mbc_set_framebuffer_manager)
+static FramebufferManager* g_framebuffer_manager = nullptr;
+
+// Setter function to inject framebuffer manager dependency
+void mbc_set_framebuffer_manager(FramebufferManager* fbmgr) {
+    g_framebuffer_manager = fbmgr;
+}
 
 bool mbc_init()
 {

@@ -23,4 +23,10 @@ void MBC3_write_ROM(uint16_t, uint8_t);
 void MBC3_write_RAM(uint16_t, uint8_t);
 uint8_t MBC3_read_RAM(uint16_t);
 
+#ifdef __cplusplus
+// Dependency injection for C++ components
+class FramebufferManager;
+void mbc_set_framebuffer_manager(FramebufferManager* fbmgr);
+#endif
+
 #endif

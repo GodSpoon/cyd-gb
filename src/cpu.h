@@ -19,6 +19,10 @@ void cpu_interrupt(uint16_t);
 #endif
 
 #ifdef __cplusplus
+// Dependency injection for C++ components
+class FramebufferManager;
+void cpu_set_framebuffer_manager(FramebufferManager* fbmgr);
+
 namespace GameBoy {
     class CPU;
 }
