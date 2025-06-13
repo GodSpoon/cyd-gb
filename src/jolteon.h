@@ -26,6 +26,7 @@ extern uint16_t palette[];
 void jolteon_update(ITouch& touch);
 void jolteon_init(IDisplay& display, FramebufferManager& fbmgr);
 void jolteon_set_display(IDisplay* display);
+void jolteon_set_framebuffer_manager(FramebufferManager* fbmgr);
 IDisplay* jolteon_get_display(void);
 void jolteon_faint(IDisplay& display, const char* msg);
 void jolteon_faint_global(const char* msg);  // Uses global display reference

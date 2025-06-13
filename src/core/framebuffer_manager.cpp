@@ -58,3 +58,40 @@ void FramebufferManager::swap_buffers() {
 }
 bool FramebufferManager::is_ready() const { return buffer_ready; }
 void FramebufferManager::mark_displayed() { buffer_ready = false; }
+
+void FramebufferManager::create_test_pattern() {
+    // Create a simple test pattern to verify the display pipeline
+    if (!front_buffer) return;
+    
+    // Clear the buffer first
+    for (int i = 0; i < FB_WIDTH * FB_HEIGHT; i++) {
+        front_buffer[i] = 0x0000; // Black background
+    }
+    
+    // Draw a simple pattern - white border and diagonal lines
+    for (int y = 0; y < FB_HEIGHT; y++) {
+        for (int x = 0; x < FB_WIDTH; x++) {
+            int index = y * FB_WIDTH + x;
+            
+            // White border around the screen
+            if (x == 0 || x == FB_WIDTH-1 || y == 0 || y == FB_HEIGHT-1) {
+                front_buffer[index] = 0xFFFF; // White
+            }
+            // Diagonal lines
+            else if ((x + y) % 20 == 0) {
+                front_buffer[index] = 0x07E0; // Green
+            }
+            // Vertical lines every 20 pixels
+            else if (x % 20 == 0) {
+                front_buffer[index] = 0xF800; // Red
+            }
+            // Horizontal lines every 20 pixels  
+            else if (y % 20 == 0) {
+                front_buffer[index] = 0x001F; // Blue
+            }
+        }
+    }
+    
+    buffer_ready = true;
+    Serial.println("FramebufferManager: Test pattern created");
+}

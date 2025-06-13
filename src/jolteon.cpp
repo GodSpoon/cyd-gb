@@ -22,16 +22,27 @@
 #define GAMEBOY_WIDTH 160
 #define GAMEBOY_HEIGHT 144
 
-// CYD display is 320x240, center the Game Boy screen
-#define CENTER_X ((320 - GAMEBOY_WIDTH) >> 1)
-#define CENTER_Y ((240 - GAMEBOY_HEIGHT) >> 1)
+// CYD display is 240x320 (in landscape mode: 320x240), center the Game Boy screen
+// Note: ST7789 starts in portrait mode (240x320), but we set rotation to landscape
+#define DISPLAY_WIDTH_LANDSCAPE 320
+#define DISPLAY_HEIGHT_LANDSCAPE 240
+#define CENTER_X ((DISPLAY_WIDTH_LANDSCAPE - GAMEBOY_WIDTH) >> 1)
+#define CENTER_Y ((DISPLAY_HEIGHT_LANDSCAPE - GAMEBOY_HEIGHT) >> 1)
 
 // Global display reference for the emulation core
 static IDisplay* g_display = nullptr;
 
+// Global framebuffer manager reference for the emulation core
+static FramebufferManager* g_framebuffer_manager = nullptr;
+
 // Function to set the display reference for the emulation core
 void jolteon_set_display(IDisplay* display) {
     g_display = display;
+}
+
+// Function to set the framebuffer manager reference for the emulation core
+void jolteon_set_framebuffer_manager(FramebufferManager* fbmgr) {
+    g_framebuffer_manager = fbmgr;
 }
 
 // Function to get the display reference for the emulation core
@@ -42,9 +53,7 @@ IDisplay* jolteon_get_display() {
 #define GAMEBOY_WIDTH 160
 #define GAMEBOY_HEIGHT 144
 
-// CYD display is 320x240, center the Game Boy screen
-#define CENTER_X ((320 - GAMEBOY_WIDTH) >> 1)
-#define CENTER_Y ((240 - GAMEBOY_HEIGHT) >> 1)
+// Remove duplicate definitions - use the constants defined above
 
 static fbuffer_t* pixels = nullptr;
 
@@ -343,8 +352,14 @@ void jolteon_faint_global(const char* msg)
 
 fbuffer_t* jolteon_get_framebuffer(void)
 {
-    Serial.printf("jolteon_get_framebuffer: returning pixels=%p\n", pixels);
-    return pixels;
+    if (g_framebuffer_manager) {
+        fbuffer_t* buffer = g_framebuffer_manager->get_back_buffer();
+        Serial.printf("jolteon_get_framebuffer: returning framebuffer manager buffer=%p\n", buffer);
+        return buffer;
+    } else {
+        Serial.printf("jolteon_get_framebuffer: framebuffer manager not set, returning pixels=%p\n", pixels);
+        return pixels;
+    }
 }
 
 void jolteon_clear_framebuffer(fbuffer_t col)
@@ -376,8 +391,6 @@ void jolteon_set_palette(const uint32_t* col)
 
 void jolteon_end_frame_with_display(IDisplay& display)
 {
-    uint16_t* pixels = jolteon_get_framebuffer();
-    
     // Handle SRAM save if requested (legacy spi_lock mechanism)
     if (spi_lock) {
         const s_rominfo* rominfo = rom_get_info();
@@ -392,12 +405,38 @@ void jolteon_end_frame_with_display(IDisplay& display)
         sram_modified = false;
     }
     
-    // Render the framebuffer to the display centered on screen
-    if (pixels) {
-        // Use drawBuffer to render the Game Boy screen in the center
-        display.drawBuffer(pixels, CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
+    static int debug_frame_counter = 0;
+    debug_frame_counter++;
+    
+    // Add debug output every 300 frames (about once every 5 seconds)
+    if (debug_frame_counter % 300 == 0) {
+        Serial.printf("jolteon_end_frame: frame %d rendered\n", debug_frame_counter);
+    }
+    
+    // Use framebuffer manager if available
+    if (g_framebuffer_manager) {
+        // Swap buffers to make the current back buffer visible
+        g_framebuffer_manager->swap_buffers();
+        
+        // Get the front buffer for display
+        const uint16_t* front_buffer = g_framebuffer_manager->get_front_buffer();
+        
+        if (front_buffer) {
+            // Use drawBuffer to render the Game Boy screen in the center
+            display.drawBuffer(front_buffer, CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
+        } else {
+            Serial.println("ERROR: Front buffer is NULL in jolteon_end_frame()");
+        }
     } else {
-        Serial.println("ERROR: Framebuffer is NULL in jolteon_end_frame()");
+        // Fallback to legacy pixel buffer
+        uint16_t* pixels = jolteon_get_framebuffer();
+        
+        if (pixels) {
+            // Use drawBuffer to render the Game Boy screen in the center
+            display.drawBuffer(pixels, CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
+        } else {
+            Serial.println("ERROR: Framebuffer is NULL in jolteon_end_frame()");
+        }
     }
     
     // End frame timing for performance monitoring
@@ -407,6 +446,9 @@ void jolteon_end_frame_with_display(IDisplay& display)
 // Parameter-less version for backward compatibility (uses global display reference)
 void jolteon_end_frame(void)
 {
+    static int test_counter = 0;
+    test_counter++;
+    
     if (g_display) {
         jolteon_end_frame_with_display(*g_display);
     } else {
@@ -558,6 +600,17 @@ void jolteon_display_splash_screen(IDisplay& display)
     
     // Show splash screen for 2 seconds (reduced from 3)
     delay(2000);
+    
+    // IMPORTANT: Clear screen and reset text settings for menu display
+    Serial.println("Clearing splash screen and resetting display for menu...");
+    display.fillScreen(0x0000); // Clear to black
+    
+    // Reset all text settings to defaults for menu system
+    display.setTextColor(0xFFFF); // White text
+    display.setTextSize(1);       // Default size
+    display.setCursor(0, 0);      // Reset cursor
+    
+    Serial.println("Display reset complete - ready for menu system");
 }
 
 void jolteon_display_test_pattern(IDisplay& display)

@@ -5,6 +5,7 @@
 #include "hal/display_interface.h"
 #include "hal/touch_interface.h"
 #include "hal/storage_interface.h"
+#include "core/framebuffer_manager.h"
 #include <memory>
 #include <cstdint>
 
@@ -41,6 +42,9 @@ private:
     std::unique_ptr<IDisplay> display_;
     std::unique_ptr<ITouch> touch_;
     std::unique_ptr<IStorage> storage_;
+    
+    // Game Boy framebuffer for LCD output
+    std::unique_ptr<FramebufferManager> framebuffer_manager_;
     
     // State machine
     EmulatorState current_state_;

@@ -1,8 +1,30 @@
 #include "core/emulator_context.h"
+#include "core/memory_utils.h"
 #include <Arduino.h>
 
+// Game Boy emulator includes
+extern "C" {
+    #include "cpu.h"
+    #include "lcd.h"
+    #include "rom.h"
+    #include "timer.h"
+}
+#include "mbc.h"
+#include "jolteon.h"  // For jolteon_set_display()
+#include "rom_streamer.h"  // C++ class, include outside extern "C"
+
+// Forward declaration for cpu_set_framebuffer_manager
+class FramebufferManager;
+
+// Temporary implementation to resolve linkage issue
+void cpu_set_framebuffer_manager(FramebufferManager* fbmgr) {
+    // TODO: Implement CPU framebuffer dependency injection
+    // For now, this is a stub to allow compilation
+    static_cast<void>(fbmgr); // Suppress unused parameter warning
+}
+
 // Splash screen timing constants
-static constexpr unsigned long SPLASH_DISPLAY_TIME_MS = 2000;
+static constexpr unsigned long SPLASH_DISPLAY_TIME_MS = 2000;  // 2 seconds (reduced for testing)
 
 // Menu constants
 static constexpr uint16_t MENU_BACKGROUND_COLOR = 0x0000;  // Black
@@ -16,6 +38,7 @@ EmulatorContext::EmulatorContext(
 ) : display_(std::move(display)),
     touch_(std::move(touch)), 
     storage_(std::move(storage)),
+    framebuffer_manager_(make_unique<FramebufferManager>()),
     current_state_(EmulatorState::UNINITIALIZED),
     last_error_(EmulatorError::SUCCESS),
     initialized_(false),
@@ -56,6 +79,10 @@ Result<void> EmulatorContext::initialize() {
         return Result<void>::err(EmulatorError::DISPLAY_INIT_FAILED);
     }
     
+    // Set the global display reference for jolteon_end_frame()
+    Serial.println("EmulatorContext: Setting global display reference...");
+    jolteon_set_display(display_.get());
+    
     // Initialize touch
     Serial.println("EmulatorContext: Initializing touch...");
     if (!touch_->init()) {
@@ -74,6 +101,23 @@ Result<void> EmulatorContext::initialize() {
         transitionToState(EmulatorState::ERROR);
         return Result<void>::err(EmulatorError::SD_CARD_ERROR);
     }
+    
+    // Initialize framebuffer manager for Game Boy LCD output
+    Serial.println("EmulatorContext: Initializing framebuffer manager...");
+    if (!framebuffer_manager_->init()) {
+        Serial.println("EmulatorContext: Framebuffer manager initialization failed");
+        last_error_ = EmulatorError::HARDWARE_ERROR;
+        transitionToState(EmulatorState::ERROR);
+        return Result<void>::err(EmulatorError::HARDWARE_ERROR);
+    }
+    
+    // Inject framebuffer manager into Game Boy modules
+    Serial.println("EmulatorContext: Injecting framebuffer manager into Game Boy modules...");
+    lcd_set_framebuffer_manager(framebuffer_manager_.get());
+    cpu_set_framebuffer_manager(framebuffer_manager_.get());
+    mbc_set_framebuffer_manager(framebuffer_manager_.get());
+    jolteon_set_framebuffer_manager(framebuffer_manager_.get());
+    Serial.println("EmulatorContext: Framebuffer manager dependency injection complete");
     
     // All hardware initialized successfully
     initialized_ = true;
@@ -117,27 +161,11 @@ Result<void> EmulatorContext::runSplash() {
     if (!splash_displayed) {
         Serial.println("EmulatorContext: Displaying splash screen");
         
-        // Clear screen and show splash
-        display_->fillScreen(0x0000);  // Black background
-        display_->setTextColor(0xFFFF);  // White text
-        display_->setTextSize(3);
+        // Draw splash screen with logo
+        Serial.println("EmulatorContext: Drawing splash screen with logo");
+        jolteon_display_splash_screen(*display_);
         
-        // Center the title
-        int16_t title_x = (display_->width() - 12 * 8 * 3) / 2;  // Approximate centering
-        int16_t title_y = display_->height() / 2 - 20;
-        display_->setCursor(title_x, title_y);
-        display_->print("Game Boy");
-        
-        display_->setTextSize(2);
-        int16_t subtitle_x = (display_->width() - 8 * 8 * 2) / 2;  // Approximate centering
-        int16_t subtitle_y = title_y + 40;
-        display_->setCursor(subtitle_x, subtitle_y);
-        display_->print("Emulator");
-        
-        display_->setTextSize(1);
-        display_->setTextColor(0x7BEF);  // Gray
-        display_->setCursor(10, display_->height() - 20);
-        display_->print("Loading...");
+        Serial.println("EmulatorContext: Splash screen displayed successfully");
         
         splash_displayed = true;
     }
@@ -161,6 +189,9 @@ Result<void> EmulatorContext::runMenu() {
     if (!menu_displayed) {
         Serial.println("EmulatorContext: Displaying ROM selection menu");
         
+        // Add a delay after splash screen to ensure display is ready
+        delay(100);
+        
         // List ROM files from storage
         rom_files.clear();
         StorageError list_result = storage_->listFiles("/", ".gb", rom_files);
@@ -172,22 +203,44 @@ Result<void> EmulatorContext::runMenu() {
             return Result<void>::err(EmulatorError::SD_CARD_ERROR);
         }
         
+        Serial.printf("EmulatorContext: Found %d ROM files, clearing display for menu\n", rom_files.size());
+        
         // Display menu
         display_->fillScreen(MENU_BACKGROUND_COLOR);
-        display_->setTextSize(2);
-        display_->setTextColor(MENU_TEXT_COLOR);
+        delay(200); // Longer delay after clear
+        
+        // Reset text settings completely after splash screen
+        Serial.println("EmulatorContext: Resetting all text settings after splash");
+        display_->setTextSize(1);  // Reset to basic size first
+        display_->setTextColor(0xFFFF);  // Reset to white
+        display_->setCursor(0, 0);  // Reset cursor to origin
+        
+        Serial.println("EmulatorContext: Setting up menu text");
+        display_->setTextSize(3);  // Larger text size
+        display_->setTextColor(0xFFFF);  // Force white color
         display_->setCursor(10, 10);
+        Serial.println("EmulatorContext: About to print 'Select ROM:'");
         display_->print("Select ROM:");
         
+        Serial.println("EmulatorContext: Menu header displayed - forcing another test");
+        
+        // Force additional test text to ensure display is working
+        display_->setTextColor(0xF800);  // Force red color
+        display_->setTextSize(2);
+        display_->setCursor(10, 45);
+        display_->print("MENU TEST");
+        delay(500); // Brief pause to ensure text is rendered
+        
         // Show ROM list
-        display_->setTextSize(1);
+        Serial.println("EmulatorContext: Displaying ROM list");
+        display_->setTextSize(2);  // Larger text for ROM list
         for (size_t i = 0; i < rom_files.size() && i < 8; ++i) {  // Limit to 8 visible items
-            display_->setCursor(10, 40 + i * 20);
+            display_->setCursor(10, 50 + i * 25);  // More spacing
             if (i == selected_index) {
-                display_->setTextColor(MENU_HIGHLIGHT_COLOR);
+                display_->setTextColor(0xF800);  // Force red color
                 display_->print("> ");
             } else {
-                display_->setTextColor(MENU_TEXT_COLOR);
+                display_->setTextColor(0xFFFF);  // Force white color
                 display_->print("  ");
             }
             
@@ -198,21 +251,35 @@ Result<void> EmulatorContext::runMenu() {
                 strncpy(truncated, filename, 27);
                 strcpy(truncated + 27, "...");
                 display_->print(truncated);
+                Serial.printf("EmulatorContext: Displayed ROM %d: %s\n", (int)i, truncated);
             } else {
                 display_->print(filename);
+                Serial.printf("EmulatorContext: Displayed ROM %d: %s\n", (int)i, filename);
             }
         }
         
         if (rom_files.empty()) {
-            display_->setCursor(10, 40);
-            display_->setTextColor(MENU_HIGHLIGHT_COLOR);
+            Serial.println("EmulatorContext: No ROM files found, displaying error message");
+            display_->setCursor(10, 50);
+            display_->setTextColor(0xF800);  // Force red color
             display_->print("No ROM files found!");
-            display_->setCursor(10, 60);
-            display_->setTextColor(MENU_TEXT_COLOR);
+            display_->setCursor(10, 80);
+            display_->setTextColor(0xFFFF);  // Force white color
             display_->print("Add .gb files to SD card");
         }
         
+        // Force a test pattern to ensure text is visible
+        Serial.println("EmulatorContext: Adding forced test text to verify display");
+        display_->setCursor(10, 200);
+        display_->setTextColor(0x07E0);  // Force green color
+        display_->setTextSize(2);
+        display_->print("TEXT TEST - VISIBLE?");
+        
+        Serial.println("EmulatorContext: Menu display completed");
         menu_displayed = true;
+        
+        // Give the display time to render all text
+        delay(100);
     }
     
     // Handle touch input
@@ -229,8 +296,55 @@ Result<void> EmulatorContext::runMenu() {
                         selected_index = touch_index;
                         Serial.printf("EmulatorContext: Selected ROM: %s\n", rom_files[selected_index].c_str());
                         
-                        // TODO: Load and start the ROM
-                        // For now, just transition to running state
+                        // Load and start the ROM
+                        std::string rom_path = "/" + rom_files[selected_index];
+                        
+                        // Check if ROM file exists
+                        if (!storage_->exists(rom_path.c_str())) {
+                            Serial.printf("EmulatorContext: ROM file does not exist: %s\n", rom_path.c_str());
+                            last_error_ = EmulatorError::ROM_LOAD_FAILED;
+                            transitionToState(EmulatorState::ERROR);
+                            return Result<void>::err(EmulatorError::ROM_LOAD_FAILED);
+                        }
+                        
+                        Serial.printf("EmulatorContext: Initializing ROM streamer with %s\n", rom_path.c_str());
+                        
+                        // Initialize ROM streamer with the ROM file path
+                        if (!rom_streamer.init(rom_path.c_str())) {
+                            Serial.printf("EmulatorContext: Failed to initialize ROM streamer with %s\n", rom_path.c_str());
+                            last_error_ = EmulatorError::ROM_LOAD_FAILED;
+                            transitionToState(EmulatorState::ERROR);
+                            return Result<void>::err(EmulatorError::ROM_LOAD_FAILED);
+                        }
+                        
+                        // Initialize Game Boy ROM (using ROM streamer)
+                        if (!rom_init(nullptr)) {  // ROM streamer is used instead of direct bytes
+                            Serial.println("EmulatorContext: Failed to initialize Game Boy ROM");
+                            rom_streamer.cleanup();
+                            last_error_ = EmulatorError::ROM_LOAD_FAILED;
+                            transitionToState(EmulatorState::ERROR);
+                            return Result<void>::err(EmulatorError::ROM_LOAD_FAILED);
+                        }
+                        
+                        Serial.println("EmulatorContext: Game Boy ROM initialized successfully");
+                        
+                        // Initialize Game Boy CPU
+                        cpu_init();
+                        Serial.println("EmulatorContext: Game Boy CPU initialized");
+                        
+                        // Initialize Game Boy LCD
+                        if (!lcd_init()) {
+                            Serial.println("EmulatorContext: Failed to initialize Game Boy LCD");
+                            rom_streamer.cleanup();
+                            last_error_ = EmulatorError::HARDWARE_ERROR;
+                            transitionToState(EmulatorState::ERROR);
+                            return Result<void>::err(EmulatorError::HARDWARE_ERROR);
+                        }
+                        Serial.println("EmulatorContext: Game Boy LCD initialized");
+                        
+                        Serial.println("EmulatorContext: Game Boy emulator fully initialized - starting execution");
+                        
+                        // Transition to running state
                         menu_displayed = false;  // Reset for next time
                         transitionToState(EmulatorState::RUNNING_ROM);
                     }
@@ -246,34 +360,84 @@ Result<void> EmulatorContext::runMenu() {
 }
 
 Result<void> EmulatorContext::runEmulator() {
-    static bool emulator_displayed = false;
+    static bool emulator_started = false;
+    static bool test_pattern_created = false;
     
-    if (!emulator_displayed) {
-        Serial.println("EmulatorContext: Starting Game Boy emulator");
+    if (!emulator_started) {
+        Serial.println("EmulatorContext: Game Boy emulator running state entered");
+        emulator_started = true;
         
-        // Display placeholder for now
-        display_->fillScreen(0x001F);  // Blue background
-        display_->setTextColor(0xFFFF);
-        display_->setTextSize(2);
+        // Clear screen to prepare for Game Boy output
+        display_->fillScreen(0x0000);  // Black background
         
-        int16_t text_x = (display_->width() - 10 * 8 * 2) / 2;
-        int16_t text_y = display_->height() / 2;
-        display_->setCursor(text_x, text_y);
-        display_->print("ROM Running");
-        
-        display_->setTextSize(1);
-        display_->setCursor(10, display_->height() - 40);
-        display_->print("Touch screen to return to menu");
-        
-        emulator_displayed = true;
+        // Create a test pattern to verify the display pipeline is working
+        if (!test_pattern_created) {
+            framebuffer_manager_->create_test_pattern();
+            test_pattern_created = true;
+        }
     }
     
-    // Handle touch to return to menu (temporary)
+    // Run Game Boy CPU, LCD, and Timer cycles
+    // This is the main emulation loop
+    static uint32_t frame_counter = 0;
+    uint32_t cycles = cpu_cycle();
+    if (cycles > 0) {
+        lcd_cycle(cycles);
+        timer_cycle(cycles);
+        
+        // Debug output every 1000 frames
+        frame_counter++;
+        if (frame_counter % 1000 == 0) {
+            Serial.printf("EmulatorContext: Emulation running - frame %d, cycles: %d\n", 
+                         frame_counter, cycles);
+        }
+        
+        // Check if framebuffer is ready for display
+        if (framebuffer_manager_->is_ready()) {
+            const uint16_t* fb = framebuffer_manager_->get_front_buffer();
+            if (fb) {
+                // Calculate scaling and positioning for Game Boy screen on TFT display
+                int scale_x = display_->width() / FramebufferManager::FB_WIDTH;
+                int scale_y = display_->height() / FramebufferManager::FB_HEIGHT;
+                int scale = (scale_x < scale_y) ? scale_x : scale_y;
+                
+                // Center the Game Boy screen on the TFT display
+                int offset_x = (display_->width() - FramebufferManager::FB_WIDTH * scale) / 2;
+                int offset_y = (display_->height() - FramebufferManager::FB_HEIGHT * scale) / 2;
+                
+                // Draw Game Boy framebuffer to TFT display with scaling
+                for (int y = 0; y < FramebufferManager::FB_HEIGHT; y++) {
+                    for (int x = 0; x < FramebufferManager::FB_WIDTH; x++) {
+                        uint16_t pixel = fb[y * FramebufferManager::FB_WIDTH + x];
+                        
+                        // Draw scaled pixel block
+                        for (int dy = 0; dy < scale; dy++) {
+                            for (int dx = 0; dx < scale; dx++) {
+                                int screen_x = offset_x + x * scale + dx;
+                                int screen_y = offset_y + y * scale + dy;
+                                if (screen_x < display_->width() && screen_y < display_->height()) {
+                                    display_->drawPixel(screen_x, screen_y, pixel);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                framebuffer_manager_->mark_displayed();
+            }
+        }
+    }
+    
+    // Handle touch to return to menu (for now - later this will be for controls)
     if (touch_->touched()) {
         TouchPoint point = touch_->getPoint();
         if (point.pressed) {
             Serial.println("EmulatorContext: Touch detected, returning to menu");
-            emulator_displayed = false;  // Reset for next time
+            
+            // Clean up ROM streamer
+            rom_streamer.cleanup();
+            
+            emulator_started = false;  // Reset for next time
             transitionToState(EmulatorState::MENU);
             delay(200);  // Debouncing
         }

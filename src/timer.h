@@ -1,6 +1,10 @@
 #ifndef TIMER_H
 #define TIMER_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 
 void timer_set_tac(uint8_t);
@@ -12,5 +16,9 @@ uint8_t timer_get_tac(void);
 void timer_reset_div(void);
 void timer_set_counter(uint8_t);
 void timer_set_modulo(uint8_t);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

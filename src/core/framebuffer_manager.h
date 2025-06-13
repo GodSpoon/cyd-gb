@@ -17,6 +17,7 @@ public:
     void swap_buffers();
     bool is_ready() const;
     void mark_displayed();
+    void create_test_pattern(); // For testing the display pipeline
 
 private:
     uint16_t* front_buffer;

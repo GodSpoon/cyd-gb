@@ -1,16 +1,12 @@
 #include <stdio.h>
+#include "cpu.h"
 #include "mem.h"
 #include "interrupt.h"
 #include "jolteon.h"
 #include "core/framebuffer_manager.h"
 
-// Static reference to framebuffer manager (set via cpu_set_framebuffer_manager)
-static FramebufferManager* g_framebuffer_manager = nullptr;
-
-// Setter function to inject framebuffer manager dependency
-void cpu_set_framebuffer_manager(FramebufferManager* fbmgr) {
-    g_framebuffer_manager = fbmgr;
-}
+// Forward declaration for framebuffer manager access
+extern "C" FramebufferManager* cpu_get_framebuffer_manager(void);
 
 /* 16-bit mode */
 #define set_HL(x) do {uint32_t macro = (x); c.L = macro&0xFF; c.H = macro>>8;} while(0)
