@@ -64,6 +64,7 @@ struct CPU {
 
 static struct CPU c;
 static bool halt_bug;
+static bool cpu_initialized = false;
 bool halted;
 
 #ifdef __cplusplus
@@ -74,12 +75,22 @@ void cpu_init(void)
 {	
 	if (usebootrom) return;
 	
+	// Initialize CPU state variables
+	halt_bug = false;
+	halted = false;
+	
+	// Initialize CPU state to Game Boy power-on defaults
 	set_AF(0x01B0);
 	set_BC(0x0013);
 	set_DE(0x00D8);
 	set_HL(0x014D);
 	c.SP = 0xFFFE;
 	c.PC = 0x0100;
+	c.cycles = 0;
+	c.lastcycles = 0;
+	
+	// Mark CPU as initialized
+	cpu_initialized = true;
 }
 
 static void RLC(uint8_t reg)
@@ -721,6 +732,12 @@ uint32_t cpu_cycle(void)
 	uint8_t b, t;
 	uint16_t s;
 	uint32_t i;
+	
+	// Protect against uninitialized CPU calls
+	if (!cpu_initialized) {
+		Serial.println("CPU cycle called before cpu_init! Ignoring...");
+		return 1; // Return minimal cycles to prevent infinite loops
+	}
 	
 	if(halted)
 	{

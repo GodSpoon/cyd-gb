@@ -28,7 +28,14 @@ public:
     
     // ROM info
     size_t get_size() const { return rom_size; }
-    bool is_valid() const { return rom_file && rom_size > 0; }
+    bool is_valid() const { 
+        if (!rom_file || rom_size == 0) return false;
+        // Check at least one cache bank is allocated
+        for (int i = 0; i < 4; i++) {
+            if (bank_cache[i] != nullptr) return true;
+        }
+        return false;
+    }
 };
 
 extern ROMStreamer rom_streamer;

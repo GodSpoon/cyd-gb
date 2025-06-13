@@ -16,7 +16,24 @@
     /* rombank pointer not used - access via rom_streamer.read_byte() */ \
 } while(0)
 
-#define SET_RAM_BANK(n)		(rambank = &ram[((n) & (ram_banks - 1)) * 0x2000])
+#define SET_RAM_BANK(n) do { \
+    if (ram && allocated_ram_size > 0) { \
+        if (allocated_ram_size >= 0x2000) { \
+            /* Full size allocation - use normal bank switching */ \
+            uint32_t bank_offset = ((n) & (ram_banks - 1)) * 0x2000; \
+            if (bank_offset < allocated_ram_size) { \
+                rambank = &ram[bank_offset]; \
+            } else { \
+                rambank = &ram[0]; /* Fallback to bank 0 */ \
+            } \
+        } else { \
+            /* Reduced allocation - always use bank 0 */ \
+            rambank = &ram[0]; \
+        } \
+    } else { \
+        rambank = nullptr; \
+    } \
+} while(0)
 
 static uint32_t curr_rom_bank = 1;
 static uint8_t rom_banks;
@@ -28,6 +45,7 @@ static const uint8_t *rom;
 static uint8_t *ram;
 uint8_t *rambank;
 static const s_rominfo *rominfo;
+size_t allocated_ram_size = 0; // Track actual allocated RAM size for bounds checking - NOT static so mem.cpp can access it
 
 MBCReader mbc_read_ram;
 MBCWriter mbc_write_rom;
@@ -38,6 +56,9 @@ extern FramebufferManager framebuffer_manager;
 bool mbc_init()
 {
 	Serial.println("mbc_init: Starting MBC initialization...");
+	
+	// Add yield to ensure any pending operations complete
+	yield();
 	
 	rom = rom_getbytes();
 	if (!rom) {
@@ -70,7 +91,10 @@ bool mbc_init()
 	if (alloc_size <= 8192) {  // 8KB or less - try single allocation
 		Serial.println("mbc_init: Using single allocation for small cartridge RAM...");
 		ram = (uint8_t*)malloc(alloc_size);
-		if (ram) memset(ram, 0, alloc_size); // Zero manually
+		if (ram) {
+			memset(ram, 0, alloc_size); // Zero manually
+			allocated_ram_size = alloc_size;
+		}
 	} else {
 		Serial.printf("mbc_init: Large RAM requirement (%d bytes) - using reduced allocation...\n", alloc_size);
 		// For Pokemon Yellow (32KB), try to allocate less RAM - many games work with reduced RAM
@@ -80,21 +104,26 @@ bool mbc_init()
 		if (ram) {
 			memset(ram, 0, reduced_size);
 			alloc_size = reduced_size;
+			allocated_ram_size = reduced_size;
 		}
 	}
 	
 	if (!ram) {
 		Serial.println("mbc_init: Regular allocation failed, trying aligned memory...");
 		// Try aligned allocation as fallback but avoid PSRAM-related caps
-		ram = (uint8_t*)aligned_alloc(32, alloc_size);
+		// ESP32 aligned_alloc can be problematic, try regular calloc instead
+		ram = (uint8_t*)calloc(1, alloc_size);
 		if (ram) {
-			memset(ram, 0, alloc_size);  // Clear the memory since aligned_alloc doesn't zero it
+			allocated_ram_size = alloc_size;
 		}
 	}
 	
 	if (!ram) {
 		Serial.println("mbc_init: Aligned allocation failed, trying regular calloc...");
 		ram = (uint8_t*)calloc(1, alloc_size);
+		if (ram) {
+			allocated_ram_size = alloc_size;
+		}
 	}
 	
 	if (!ram) {
@@ -106,15 +135,28 @@ bool mbc_init()
 			memset(ram, 0, min_size); // Zero it manually
 			Serial.printf("mbc_init: Using reduced RAM size: %d bytes instead of %d\n", min_size, alloc_size);
 			alloc_size = min_size;
-			// Update ram_banks to match reduced allocation
-			ram_banks = alloc_size / 0x2000; // Each RAM bank is 8KB (0x2000)
-			if (ram_banks == 0) ram_banks = 1; // At least 1 bank
+			allocated_ram_size = min_size;
+			// CRITICAL FIX: For reduced allocations, set ram_banks to 1 and don't use 8KB bank size
+			// Instead, treat the entire allocation as bank 0
+			ram_banks = 1; // Always 1 bank for reduced allocations
+		} else {
+			// Final fallback: try 1KB 
+			min_size = 1024;
+			Serial.printf("mbc_init: 2KB allocation failed, trying final fallback: %d bytes\n", min_size);
+			ram = (uint8_t*)malloc(min_size);
+			if (ram) {
+				memset(ram, 0, min_size);
+				Serial.printf("mbc_init: Using minimal RAM size: %d bytes\n", min_size);
+				alloc_size = min_size;
+				allocated_ram_size = min_size;
+				ram_banks = 1;
+			}
 		}
 	}
 	// If we succeeded with a smaller allocation above, but not in the previous block, update ram_banks accordingly
 	else if (ram && alloc_size != ram_size) {
-		ram_banks = alloc_size / 0x2000;
-		if (ram_banks == 0) ram_banks = 1;
+		// For any allocation that's not the full required size, use 1 bank
+		ram_banks = 1; // Simplified: treat entire allocation as bank 0
 	}
 	
 	if (!ram) {
@@ -131,15 +173,29 @@ bool mbc_init()
 		return false;
 	}
 	
-	Serial.printf("mbc_init: Cartridge RAM allocated at %p\n", ram);
+	Serial.printf("mbc_init: Cartridge RAM allocated at %p, size: %d bytes\n", ram, allocated_ram_size);
 	
-	if (rominfo->has_battery && ram_size) {
-		// Serial.println("mbc_init: Loading SRAM (battery backup)");
-		jolteon_load_sram(ram, ram_size);
+	if (rominfo->has_battery && allocated_ram_size > 0) {
+		Serial.printf("mbc_init: Loading SRAM (battery backup) with actual size: %d bytes\n", allocated_ram_size);
+		jolteon_load_sram(ram, allocated_ram_size);
 	}
 	
+	// Add yield before bank switching operations
+	yield();
+	
 	SET_ROM_BANK(1);
-	SET_RAM_BANK(0);
+	
+	// CRITICAL FIX: Add null pointer protection for RAM bank switching
+	if (ram && ram_banks > 0) {
+		SET_RAM_BANK(0);
+		Serial.printf("mbc_init: RAM bank set to 0, rambank = %p\n", rambank);
+	} else {
+		Serial.printf("mbc_init: WARNING - No RAM allocated or ram_banks = 0, skipping RAM bank init\n");
+		rambank = nullptr;
+	}
+	
+	// Add yield after bank switching
+	yield();
 	
 	switch(rominfo->rom_mapper)
 	{
@@ -197,15 +253,33 @@ void MBC3_write_ROM(uint16_t d, uint8_t i)
 void MBC3_write_RAM(uint16_t d, uint8_t i)
 {
 	/* TODO: write to RTC */
-	if (!ram_enabled)
+	if (!ram_enabled || !rambank)
 		return;
-	rambank[d - 0xA000] = i;
+		
+	// Add bounds checking using actual allocated RAM size
+	uint16_t offset = d - 0xA000;
+	if (allocated_ram_size > 0 && offset >= allocated_ram_size) {
+		// Out of bounds access - some games might try to access more RAM than allocated
+		return;
+	}
+	
+	rambank[offset] = i;
 	//sram_modified = true;
 }
 
 uint8_t MBC3_read_RAM(uint16_t i)
 {
-	return ram_enabled ? rambank[i - 0xA000] : 0xFF;
+	if (!ram_enabled || !rambank) 
+		return 0xFF;
+		
+	// Add bounds checking using actual allocated RAM size
+	uint16_t offset = i - 0xA000;  
+	if (allocated_ram_size > 0 && offset >= allocated_ram_size) {
+		// Out of bounds access - return 0xFF for unmapped memory
+		return 0xFF;
+	}
+	
+	return rambank[offset];
 }
 
 
@@ -249,15 +323,33 @@ void MBC1_write_ROM(uint16_t d, uint8_t i)
 
 void MBC1_write_RAM(uint16_t d, uint8_t i)
 {
-	if (!ram_enabled)
+	if (!ram_enabled || !rambank)
 		return;
-	rambank[d - 0xA000] = i;
+	
+	// Add bounds checking using actual allocated RAM size
+	uint16_t offset = d - 0xA000;
+	if (allocated_ram_size > 0 && offset >= allocated_ram_size) {
+		// Out of bounds access - some games might try to access more RAM than allocated
+		return;
+	}
+	
+	rambank[offset] = i;
 	//sram_modified = true;
 }
 
 uint8_t MBC1_read_RAM(uint16_t i)
 {
-	return ram_enabled ? rambank[i - 0xA000] : 0xFF;
+	if (!ram_enabled || !rambank) 
+		return 0xFF;
+		
+	// Add bounds checking using actual allocated RAM size
+	uint16_t offset = i - 0xA000;
+	if (allocated_ram_size > 0 && offset >= allocated_ram_size) {
+		// Out of bounds access - return 0xFF for unmapped memory
+		return 0xFF;
+	}
+	
+	return rambank[offset];
 }
 
 // Use framebuffer_manager.get_back_buffer() for direct framebuffer access

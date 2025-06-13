@@ -54,8 +54,28 @@ QueueHandle_t frameCompleteQueue = NULL;
 void emulation_task(void* pvParameters) {
     Serial.println("Emulation task started on Core 1");
     
+    // Wait for emulator to be fully initialized before starting emulation
+    while (!emulator_initialized) {
+        Serial.println("Emulation task waiting for initialization...");
+        vTaskDelay(pdMS_TO_TICKS(100)); // Wait 100ms
+    }
+    
+    Serial.println("Emulation task: Initialization confirmed, starting emulation loop");
+    
+    // Additional safety: Verify critical components are ready
+    if (!rom_streamer.is_valid()) {
+        Serial.println("ERROR: ROM streamer not valid in emulation task!");
+        vTaskSuspend(NULL); // Suspend this task
+        return;
+    }
+    
+    // Wait a bit more to ensure everything is stable
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    Serial.println("Emulation task: Starting Game Boy emulation loop");
+    
     while (1) {
-        if (current_state == APP_STATE_EMULATOR) {
+        if (current_state == APP_STATE_EMULATOR && emulator_initialized) {
             // Core emulation logic - CPU, memory, timers
             jolteon_update();
             uint32_t cycles = cpu_cycle();
@@ -111,6 +131,17 @@ void setup() {
     String first_rom_path = "";
     Serial.begin(115200);
     Serial.println("ESP32 CYD Game Boy Emulator Starting...");
+    
+    // CRITICAL: Early memory optimization before any allocations
+    Serial.println("Performing early memory optimization...");
+    heap_caps_check_integrity_all(true);
+    
+    // Call Jolteon early memory optimization
+    jolteon_optimize_memory_early();
+    
+    // Show initial memory state
+    Serial.printf("Initial free heap: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("Largest free block: %d bytes\n", ESP.getMaxAllocHeap());
     
     // Initialize TFT display
     Serial.println("Initializing TFT_eSPI display...");
@@ -187,9 +218,95 @@ void setup() {
     if (first_rom_path.length() > 0) {
         extern void menu_set_rompath(const char* path); // Add this function to menu.cpp
         menu_set_rompath(first_rom_path.c_str());
-        current_state = APP_STATE_EMULATOR;
+        
+        // CRITICAL FIX: Initialize emulator BEFORE creating any tasks
+        // This ensures all memory allocations happen on Core 0 before Core 1 tasks start
+        Serial.println("Initializing emulator before task creation...");
+        
+        // Additional safety: Ensure all SD card operations are complete
+        delay(100);
+        
         initialize_emulator();
+        
+        // Additional safety: Ensure emulator initialization is completely finished
+        delay(200);
+        
+        // Only set state and create tasks AFTER successful initialization
+        current_state = APP_STATE_EMULATOR; // Set state AFTER initialization completes
         Serial.printf("Auto-started first ROM: %s\n", first_rom_path.c_str());
+        
+        Serial.println("Setup complete! Creating tasks...");
+        delay(500); // Longer delay to ensure everything is fully ready and stable
+        
+        // Additional safety: Ensure all initializations are complete
+        Serial.println("Verifying emulator initialization state...");
+        if (!emulator_initialized) {
+            Serial.println("ERROR: Emulator not properly initialized!");
+            while(1) delay(1000);
+        }
+        
+        // Final memory check before task creation
+        Serial.printf("Free heap before task creation: %d bytes\n", ESP.getFreeHeap());
+        Serial.printf("Largest free block: %d bytes\n", ESP.getMaxAllocHeap());
+
+        // Create frame completion queue for inter-task communication
+        frameCompleteQueue = xQueueCreate(2, sizeof(uint32_t));
+        if (!frameCompleteQueue) {
+            Serial.println("Failed to create frame completion queue!");
+            while (1) delay(1000);
+        }
+
+        // Core affinity optimization - ONLY after successful initialization
+        Serial.println("Creating tasks with core affinity optimization...");
+        
+        // CRITICAL: Create tasks on the same core first to avoid race conditions
+        // Core 0: Dedicated to rendering and system tasks
+        BaseType_t result2 = xTaskCreatePinnedToCore(
+            rendering_task,       // Task function
+            "GB_Rendering",       // Name
+            4096,                 // Stack size (4KB for rendering)
+            NULL,                 // Parameters
+            4,                    // Lower priority for rendering
+            &renderingTaskHandle, // Task handle
+            0                     // Core 0
+        );
+        
+        if (result2 != pdPASS) {
+            Serial.println("Failed to create rendering task!");
+            while (1) delay(1000);
+        }
+        
+        // Small delay to let first task start completely
+        delay(500);
+        
+        Serial.println("Creating emulation task on Core 1...");
+        
+        // Core 1: Dedicated to emulation (CPU, memory, timers)
+        BaseType_t result1 = xTaskCreatePinnedToCore(
+            emulation_task,        // Task function
+            "GB_Emulation",       // Name
+            8192,                 // Stack size (8KB for emulation)
+            NULL,                 // Parameters
+            6,                    // High priority for emulation
+            &emulationTaskHandle, // Task handle
+            1                     // Core 1
+        );
+        
+        if (result1 != pdPASS) {
+            Serial.println("Failed to create emulation task!");
+            while (1) delay(1000);
+        }
+        
+        // Final verification
+        if (result1 == pdPASS && result2 == pdPASS) {
+            Serial.println("Core affinity optimization complete:");
+            Serial.println("  Core 0: Rendering and system tasks");
+            Serial.println("  Core 1: Game Boy emulation (CPU, memory, timers)");
+        } else {
+            Serial.println("Failed to create tasks with core affinity!");
+            while (1) delay(1000);
+        }
+        
     } else {
         tft.fillScreen(TFT_RED);
         tft.setTextColor(TFT_WHITE, TFT_RED);
@@ -201,49 +318,6 @@ void setup() {
         Serial.println("[FATAL] No .gb ROMs found on SD card.");
         while (1) delay(1000);
     }
-    Serial.println("Setup complete! Entering emulation...");
-    delay(100); // Small delay to ensure everything is ready
-
-    // Create frame completion queue for inter-task communication
-    frameCompleteQueue = xQueueCreate(2, sizeof(uint32_t));
-    if (!frameCompleteQueue) {
-        Serial.println("Failed to create frame completion queue!");
-        while (1) delay(1000);
-    }
-
-    // Core affinity optimization according to improvement plan
-    Serial.println("Creating tasks with core affinity optimization...");
-    
-    // Core 1: Dedicated to emulation (CPU, memory, timers)
-    BaseType_t result1 = xTaskCreatePinnedToCore(
-        emulation_task,        // Task function
-        "GB_Emulation",       // Name
-        8192,                 // Stack size (8KB for emulation)
-        NULL,                 // Parameters
-        6,                    // High priority for emulation
-        &emulationTaskHandle, // Task handle
-        1                     // Core 1
-    );
-    
-    // Core 0: Dedicated to rendering and system tasks
-    BaseType_t result2 = xTaskCreatePinnedToCore(
-        rendering_task,       // Task function
-        "GB_Rendering",       // Name
-        4096,                 // Stack size (4KB for rendering)
-        NULL,                 // Parameters
-        4,                    // Lower priority for rendering
-        &renderingTaskHandle, // Task handle
-        0                     // Core 0
-    );
-    
-    if (result1 != pdPASS || result2 != pdPASS) {
-        Serial.println("Failed to create tasks with core affinity!");
-        while (1) delay(1000);
-    }
-    
-    Serial.println("Core affinity optimization complete:");
-    Serial.println("  Core 1: Game Boy emulation (CPU, memory, timers)");
-    Serial.println("  Core 0: Rendering and system tasks");
 }
 
 void initialize_emulator() {
@@ -266,6 +340,12 @@ void initialize_emulator() {
     const uint8_t* rom = jolteon_load_rom(rom_path);
     if (!rom) {
         ErrorHandler::handle_error(EmulatorError::ROM_LOAD_FAILED, "ROM streaming failed");
+        return;
+    }
+    
+    // Verify ROM streaming is actually working
+    if (!rom_streamer.is_valid()) {
+        ErrorHandler::handle_error(EmulatorError::ROM_LOAD_FAILED, "ROM streamer not initialized");
         return;
     }
     // Skip boot ROM to save memory
@@ -292,7 +372,12 @@ void initialize_emulator() {
     }
     // Initialize MMU with segmented memory approach
     Serial.println("Pre-allocating MMU memory...");
-    if (!mmu_init(bootrom)) {
+    
+    // CRITICAL FIX: Don't disable interrupts during MMU init to prevent watchdog timeout
+    // Memory allocation takes time and needs watchdog feeding
+    bool mmu_success = mmu_init(bootrom);
+    
+    if (!mmu_success) {
         Serial.println("mmu_init failed - emulator cannot start");
         while(1) delay(1000);
     }
@@ -310,6 +395,13 @@ void initialize_emulator() {
     
     emulator_initialized = true;
     
+    // Additional verification that critical components are ready
+    if (!rom_streamer.is_valid()) {
+        Serial.println("ERROR: ROM streamer invalid after initialization!");
+        emulator_initialized = false;
+        return;
+    }
+    
     // Print memory status to verify reasonable usage
     print_memory_status();
     
@@ -317,6 +409,7 @@ void initialize_emulator() {
     rom_streamer.print_cache_stats();
     
     Serial.println("Game Boy emulator initialized successfully!");
+    Serial.println("All components verified and ready for emulation tasks");
 }
 
 void loop() {

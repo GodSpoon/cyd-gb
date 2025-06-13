@@ -12,22 +12,30 @@ bool DisplayManager::init() {
     Serial.println("DisplayManager: Initializing...");
     
     // Clear screen and set rotation
+    Serial.println("DisplayManager: About to clear screen...");
     tft.fillScreen(TFT_BLACK);
+    Serial.println("DisplayManager: About to set rotation...");
     tft.setRotation(1); // Landscape mode
+    Serial.println("DisplayManager: Basic TFT operations completed");
     
     // Test basic display functionality
     Serial.println("DisplayManager: Testing display...");
     tft.drawPixel(160, 120, TFT_WHITE);
     delay(100);
     tft.drawPixel(160, 120, TFT_BLACK); // Clear test pixel
+    Serial.println("DisplayManager: Display test completed");
     
     // Draw border around Game Boy area
+    Serial.println("DisplayManager: Drawing border...");
     draw_gameboy_border();
+    Serial.println("DisplayManager: Border drawn");
     
     // Allocate back buffer for double buffering
+    Serial.println("DisplayManager: Allocating back buffer...");
     if (!allocate_back_buffer()) {
         Serial.println("DisplayManager: Warning - Could not allocate back buffer, using direct rendering");
     }
+    Serial.println("DisplayManager: Back buffer allocation completed");
     
     // Check if DMA is available
     #ifdef TFT_eSPI_DMA

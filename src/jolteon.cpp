@@ -85,16 +85,40 @@ void analyze_memory_fragmentation() {
 // Try smaller buffer allocation with fragmentation handling
 bool allocate_buffers_optimized() {
     Serial.println("\nTrying optimized memory allocation...");
+    
+    // Force memory barrier to ensure all previous operations are complete
+    __asm__ __volatile__("" ::: "memory");
+    
+    // Double-check heap integrity before allocation
+    if (!heap_caps_check_integrity_all(false)) {
+        Serial.println("Heap integrity check failed before allocation!");
+        return false;
+    }
+    
     if (!framebuffer_manager.init()) {
         Serial.println("  Failed to allocate double framebuffers");
         return false;
     }
     pixels = framebuffer_manager.get_back_buffer();
+    
+    // Verify allocation success with null check
+    if (!pixels) {
+        Serial.println("  Framebuffer allocation returned NULL!");
+        return false;
+    }
+    
     // Set back buffer in DisplayManager if available
     if (display_mgr) {
         display_mgr->set_back_buffer(pixels);
     }
     Serial.printf("  Framebuffer (back) at: %p\n", pixels);
+    
+    // Verify memory integrity after allocation
+    if (!heap_caps_check_integrity_all(false)) {
+        Serial.println("Heap integrity check failed after allocation!");
+        return false;
+    }
+    
     return true;
 }
 
@@ -103,6 +127,10 @@ void jolteon_init(void)
     Serial.println("===============================");
     Serial.println("Initializing Jolteon Game Boy emulator...");
     Serial.println("===============================");
+    
+    // CRITICAL FIX: Disable interrupts during initialization to prevent Core 1 conflicts
+    portMUX_TYPE initMux = portMUX_INITIALIZER_UNLOCKED;
+    portENTER_CRITICAL(&initMux);
     
     // Early memory optimization to reduce fragmentation
     heap_caps_check_integrity_all(true);
@@ -118,30 +146,39 @@ void jolteon_init(void)
     
     // Check if we have enough memory before starting
     size_t free_heap = ESP.getFreeHeap();
-    size_t min_required = fb_size + 100 * 1024; // Framebuffer + 100KB overhead
+    size_t min_required = fb_size + 80 * 1024; // Framebuffer + 80KB overhead (reduced from 100KB)
     
     if (free_heap < min_required) {
         char error_msg[128];
         snprintf(error_msg, sizeof(error_msg), 
             "Insufficient memory: %d KB free, need %d KB", 
             (int)(free_heap/1024), (int)(min_required/1024));
+        portEXIT_CRITICAL(&initMux); // Re-enable interrupts before error handling
         jolteon_faint(error_msg);
         return;
     }
     
     // Try optimized allocation strategy
     if (!allocate_buffers_optimized()) {
+        portEXIT_CRITICAL(&initMux); // Re-enable interrupts before error handling
         jolteon_faint("Failed to allocate required buffers!");
         return;
     }
     
+    // Re-enable interrupts after memory allocations are complete
+    portEXIT_CRITICAL(&initMux);
+    
     // Initialize display manager EARLY - before framebuffer operations
     Serial.println("Initializing DisplayManager...");
+    Serial.printf("About to create DisplayManager with tft reference at %p\n", &tft);
     display_mgr = new DisplayManager(tft);
+    Serial.println("DisplayManager constructor completed");
     if (!display_mgr->init()) {
+        Serial.println("DisplayManager init failed");
         jolteon_faint("Display initialization failed");
         return;
     }
+    Serial.println("DisplayManager initialization completed successfully");
     
     // Verify framebuffer allocation and add test pattern
     Serial.printf("Framebuffer test: writing test pattern...\n");
@@ -438,70 +475,69 @@ void jolteon_display_splash_screen(void)
     tft.drawRect(bar_x - 2, bar_y - 2, bar_width + 4, bar_height + 4, TFT_WHITE);
     tft.fillRect(bar_x, bar_y, bar_width, bar_height, TFT_BLACK);
     
-    // Allocate buffer for the splash image (if we have enough memory)
-    uint16_t* image_buffer = nullptr;
-    const int total_pixels = JOLTEON_SPLASH_LANDSCAPE_WIDTH * JOLTEON_SPLASH_LANDSCAPE_HEIGHT;
-    const size_t buffer_size = total_pixels * sizeof(uint16_t);
+    // MEMORY OPTIMIZATION: Don't allocate large splash buffer
+    // 320x240x2 = 153,600 bytes is too much for ESP32 without PSRAM
+    // Instead, render directly from PROGMEM in scanlines to reduce memory usage
     
-    Serial.printf("Attempting to allocate %d bytes for splash buffer...\n", buffer_size);
+    Serial.println("Using optimized scanline rendering for splash screen...");
     
-    // Try to allocate buffer (prefer internal RAM for CYD boards without PSRAM)
-    image_buffer = (uint16_t*)malloc(buffer_size);
+    // Create a small scanline buffer (320 pixels = 640 bytes)
+    const int scanline_width = JOLTEON_SPLASH_LANDSCAPE_WIDTH;
+    const size_t scanline_buffer_size = scanline_width * sizeof(uint16_t);
+    uint16_t* scanline_buffer = (uint16_t*)malloc(scanline_buffer_size);
     
-    if (image_buffer) {
-        Serial.println("Splash buffer allocated successfully - copying image data...");
+    if (scanline_buffer) {
+        Serial.printf("Allocated %d byte scanline buffer\n", scanline_buffer_size);
         
-        // Copy image data from PROGMEM to RAM with progress updates
-        const int progress_steps = 10;
-        const int pixels_per_step = total_pixels / progress_steps;
-        
-        for (int step = 0; step < progress_steps; step++) {
-            // Update loading bar
-            int progress_width = (bar_width * (step + 1)) / progress_steps;
-            tft.fillRect(bar_x, bar_y, progress_width, bar_height, TFT_GREEN);
-            
-            // Copy a chunk of pixels
-            int start_pixel = step * pixels_per_step;
-            int end_pixel = (step == progress_steps - 1) ? total_pixels : (step + 1) * pixels_per_step;
-            
-            for (int i = start_pixel; i < end_pixel; i++) {
-                image_buffer[i] = pgm_read_word(&jolteon_splash_landscape_data[i]);
-            }
-            
-            // Small delay to show progress
-            delay(50);
-        }
-        
-        // Clear the loading screen
+        // Clear loading screen
         tft.fillScreen(TFT_BLACK);
         
-        Serial.println("Drawing buffered splash screen...");
+        // Render image scanline by scanline
+        const int total_scanlines = JOLTEON_SPLASH_LANDSCAPE_HEIGHT;
+        for (int y = 0; y < total_scanlines; y++) {
+            // Update progress bar every 24 lines (10 steps total)
+            if (y % 24 == 0) {
+                int progress_width = (bar_width * y) / total_scanlines;
+                tft.fillRect(bar_x, bar_y, progress_width, bar_height, TFT_GREEN);
+            }
+            
+            // Copy one scanline from PROGMEM to buffer
+            int scanline_start = y * scanline_width;
+            for (int x = 0; x < scanline_width; x++) {
+                scanline_buffer[x] = pgm_read_word(&jolteon_splash_landscape_data[scanline_start + x]);
+            }
+            
+            // Draw the scanline
+            tft.pushImage(0, y, scanline_width, 1, scanline_buffer);
+            
+            // Small delay every few lines to show progress
+            if (y % 12 == 0) {
+                delay(10);
+            }
+        }
         
-        // Draw the entire image at once (no flicker)
-        tft.pushImage(0, 0, JOLTEON_SPLASH_LANDSCAPE_WIDTH, JOLTEON_SPLASH_LANDSCAPE_HEIGHT, image_buffer);
-        
-        // Free the buffer
-        free(image_buffer);
-        Serial.println("Splash buffer freed");
+        // Free the small scanline buffer
+        free(scanline_buffer);
+        Serial.println("Scanline buffer freed");
         
     } else {
-        Serial.println("Failed to allocate splash buffer - using direct PROGMEM rendering...");
+        Serial.println("Failed to allocate scanline buffer - using direct PROGMEM rendering...");
         
-        // Fallback: render directly from PROGMEM with progress
+        // Ultimate fallback: render directly from PROGMEM (slower but works)
         tft.fillRect(bar_x, bar_y, bar_width, bar_height, TFT_YELLOW);
         delay(200);
         
         // Clear loading screen
         tft.fillScreen(TFT_BLACK);
         
-        // Use the original method as fallback
+        // Use direct rendering (may be slower due to PROGMEM access)
         tft.pushImage(0, 0, JOLTEON_SPLASH_LANDSCAPE_WIDTH, JOLTEON_SPLASH_LANDSCAPE_HEIGHT, jolteon_splash_landscape_data);
     }
     
     Serial.println("Splash screen displayed!");
     
-    // Show splash screen for 3 seconds
-    delay(3000);
+    // Show splash screen for 2 seconds (reduced from 3)
+    delay(2000);
 }
 
 void jolteon_display_test_pattern(void)
