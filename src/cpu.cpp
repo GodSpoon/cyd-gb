@@ -274,7 +274,7 @@ static void RL(uint8_t reg)
 		case 7: /* A */
 			t2 = flag_C;
 			set_C(!!(c.A&0x80));
-			c.A = (c.A << 1) | t2;
+			c.A = (c.A << 1) | !!(t2);
 			set_Z(!c.A);
 		break;
 	}
@@ -285,62 +285,62 @@ static void RL(uint8_t reg)
 
 static void RR(uint8_t reg)
 {
-	uint8_t t, t2;
+    uint8_t t, t2; // Add missing variable declarations
 
-	switch(reg)
-	{
-		case 0:	/* B */
-			t2 = flag_C;
-			set_C(c.B&1);
-			c.B = (c.B >> 1) | t2<<7;
-			set_Z(!c.B);
-		break;
-		case 1: /* C */
-			t2 = flag_C;
-			set_C(c.C&1);
-			c.C = (c.C >> 1) | t2<<7;
-			set_Z(!c.C);
-		break;
-		case 2: /* D */
-			t2 = flag_C;
-			set_C(c.D&1);
-			c.D = (c.D >> 1) | t2<<7;
-			set_Z(!c.D);
-		break;
-		case 3: /* E */
-			t2 = flag_C;
-			set_C(c.E&1);
-			c.E = (c.E >> 1) | t2<<7;
-			set_Z(!c.E);
-		break;
-		case 4: /* H */
-			t2 = flag_C;
-			set_C(c.H&1);
-			c.H = (c.H >> 1) | t2<<7;
-			set_Z(!c.H);
-		break;
-		case 5: /* L */
-			t2 = flag_C;
-			set_C(c.L&1);
-			c.L = (c.L >> 1) | t2<<7;
-			set_Z(!c.L);
-		break;
-		case 6: /* (HL) */
-			t = mem_get_byte(get_HL());
-			t2 = flag_C;
-			set_C(t&1);
-			t = (t >> 1) | t2<<7;
-			set_Z(!t);
-			mem_write_byte(get_HL(), t);
-			c.cycles += 2;
-		break;
-		case 7: /* A */
-			t2 = flag_C;
-			set_C(c.A&1);
-			c.A = (c.A >> 1) | (t2<<7);
-			set_Z(!c.A);
-		break;
-	}
+    switch(reg)
+    {
+        case 0: /* B */
+            t2 = flag_C;
+            set_C(c.B&1);
+            c.B = (c.B >> 1) | t2<<7;
+            set_Z(!c.B);
+        break;
+        case 1: /* C */
+            t2 = flag_C;
+            set_C(c.C&1);
+            c.C = (c.C >> 1) | t2<<7;
+            set_Z(!c.C);
+        break;
+        case 2: /* D */
+            t2 = flag_C;
+            set_C(c.D&1);
+            c.D = (c.D >> 1) | t2<<7;
+            set_Z(!c.D);
+        break;
+        case 3: /* E */
+            t2 = flag_C;
+            set_C(c.E&1);
+            c.E = (c.E >> 1) | t2<<7;
+            set_Z(!c.E);
+        break;
+        case 4: /* H */
+            t2 = flag_C;
+            set_C(c.H&1);
+            c.H = (c.H >> 1) | t2<<7;
+            set_Z(!c.H);
+        break;
+        case 5: /* L */
+            t2 = flag_C;
+            set_C(c.L&1);
+            c.L = (c.L >> 1) | t2<<7;
+            set_Z(!c.L);
+        break;
+        case 6: /* (HL) */
+            t = mem_get_byte(get_HL());
+            t2 = flag_C;
+            set_C(t&1);
+            t = (t >> 1) | t2<<7;
+            set_Z(!t);
+            mem_write_byte(get_HL(), t);
+            c.cycles += 2;
+        break;
+        case 7: /* A */
+            t2 = flag_C;
+            set_C(c.A&1);
+            c.A = (c.A >> 1) | t2<<7;
+            set_Z(!c.A);
+        break;
+    }
 	set_N(0);
 	set_H(0);
 }
@@ -402,7 +402,7 @@ static void SLA(uint8_t reg)
 
 static void SRA(uint8_t reg)
 {
-	uint8_t old, t;
+    uint8_t old, t; // Add missing variable declarations
 
 	switch(reg)
 	{
@@ -447,8 +447,8 @@ static void SRA(uint8_t reg)
 			set_C(t&1);
 			old = t&0x80;
 			t = t >> 1 | old;
-			mem_write_byte(get_HL(), t);
 			set_Z(!t);
+			mem_write_byte(get_HL(), t);
 			c.cycles += 2;
 		break;
 		case 7: /* A */
@@ -458,7 +458,7 @@ static void SRA(uint8_t reg)
 			set_Z(!c.A);
 		break;
 	}
-
+	
 	set_H(0);
 	set_N(0);
 }
@@ -1666,7 +1666,7 @@ uint32_t cpu_cycle(void)
 		case 0x9B:	/* SBC E */
 			t = flag_C + c.E;
 			set_H(((c.A&0xF) - (c.E&0xF) - flag_C) < 0);
-			set_C((c.A - c.E - flag_C) < 0);
+		 set_C((c.A - c.E - flag_C) < 0);
 			set_N(1);
 			c.A -= t;
 			set_Z(!c.A);
@@ -1920,10 +1920,10 @@ uint32_t cpu_cycle(void)
 		case 0xC1:	/* POP BC */
 			s = mem_get_word(c.SP);
 			set_BC(s);
-			c.SP += 2;
+			c.SP +=  2;
 			c.cycles += 3;
 		break;
-		case 0xC2:	/* JP NZ, mem16 */
+			case 0xC2:	/* JP NZ, mem16 */
 			if(flag_Z == 0)
 			{
 				c.PC = mem_get_word(c.PC);

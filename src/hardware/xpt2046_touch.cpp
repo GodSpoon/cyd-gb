@@ -63,41 +63,34 @@ private:
     TouchPoint transformCoordinates(int raw_x, int raw_y) const {
         TouchPoint result = {0, 0, true};
         
-        // First, map raw coordinates to base screen coordinates
-        int mapped_x = map(raw_x, calibration.x_min, calibration.x_max, 0, screen.width);
-        int mapped_y = map(raw_y, calibration.y_min, calibration.y_max, 0, screen.height);
+        // Map raw coordinates to screen coordinates
+        int mapped_x = map(raw_x, calibration.x_min, calibration.x_max, 0, screen.width - 1);
+        int mapped_y = map(raw_y, calibration.y_min, calibration.y_max, 0, screen.height - 1);
         
-        // Apply rotation transformation for landscape orientation
         switch (current_rotation) {
-            case 0: // Portrait (0°)
+            case 0: // Portrait
                 result.x = mapped_x;
                 result.y = mapped_y;
                 break;
-                
-            case 1: // Landscape (90° clockwise) - DEFAULT
-                // For landscape, we need to rotate coordinates
+            case 1: // Landscape 90°
+                result.x = screen.height - 1 - mapped_y;
+                result.y = mapped_x;
+                break;
+            case 2: // Portrait 180°
+                result.x = screen.width - 1 - mapped_x;
+                result.y = screen.height - 1 - mapped_y;
+                break;
+            case 3: // Landscape 270°
                 result.x = mapped_y;
-                result.y = screen.height - mapped_x;
+                result.y = screen.width - 1 - mapped_x;
                 break;
-                
-            case 2: // Portrait flipped (180°)
-                result.x = screen.width - mapped_x;
-                result.y = screen.height - mapped_y;
-                break;
-                
-            case 3: // Landscape flipped (270° clockwise) with horizontal mirroring
-                result.x = mapped_y;  // Adjusted for display horizontal mirroring (MX=1)
-                result.y = mapped_x;
-                break;
-                
             default:
-                // Default to landscape flipped rotation with horizontal mirroring
-                result.x = mapped_y;  // Adjusted for display horizontal mirroring (MX=1)
-                result.y = mapped_x;
+                result.x = mapped_x;
+                result.y = mapped_y;
                 break;
         }
         
-        // Constrain to screen bounds based on current rotation
+        // Determine max coordinates based on rotation
         int max_x = (current_rotation == 1 || current_rotation == 3) ? screen.height : screen.width;
         int max_y = (current_rotation == 1 || current_rotation == 3) ? screen.width : screen.height;
         
@@ -223,7 +216,7 @@ public:
         
         // Debug logging for touch coordinates (uncomment if needed for debugging)
         // Serial.printf("XPT2046Touch: Raw(%d,%d) -> Screen(%d,%d) [rotation=%d]\n", 
-        //              raw.x, raw.y, result.x, result.y, current_rotation);
+        //               raw.x, raw.y, result.x, result.y, current_rotation);
         
         return result;
     }
