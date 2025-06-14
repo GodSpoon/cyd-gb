@@ -63,7 +63,7 @@ public:
      * 
      * Performs the following initialization steps:
      * 1. Initialize TFT_eSPI instance
-     * 2. Set rotation to landscape (1)
+     * 2. Set rotation to landscape flipped (3)
      * 3. Configure backlight PWM on specified pin
      * 4. Set backlight to full brightness
      * 5. Clear screen to black
@@ -192,6 +192,15 @@ public:
      * Use sparingly and consider extending the interface instead.
      */
     void* getTFTInstance();
+    
+    /**
+     * @brief Run comprehensive display test
+     * @return true if test completed successfully, false otherwise
+     * 
+     * This method runs a series of tests to verify display functionality
+     * including color fills, text rendering, and pixel drawing.
+     */
+    bool testDisplay();
 };
 
 #endif // HARDWARE_TFT_DISPLAY_H

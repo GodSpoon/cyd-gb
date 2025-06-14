@@ -27,7 +27,7 @@ static app_state_t current_state = APP_STATE_SPLASH;
 void setup() {
     // Manual TFT initialization
     tft.init();
-    tft.setRotation(1);
+    tft.setRotation(3);
     tft.fillScreen(TFT_BLACK);
     
     // Manual backlight setup

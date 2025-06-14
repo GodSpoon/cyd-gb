@@ -26,7 +26,8 @@
 			"valarray": "cpp",
 			"random": "cpp",
 			"chrono": "cpp",
-			"limits": "cpp"
+			"limits": "cpp",
+			"functional": "cpp"
 		},
 		"terminal.integrated.env.windows": {
 			"PATH": ""

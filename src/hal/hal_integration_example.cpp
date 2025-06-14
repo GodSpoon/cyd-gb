@@ -17,7 +17,7 @@ bool HALDisplayManager::init() {
     
     // Clear screen and setup
     display->fillScreen(0x0000); // Black
-    display->setRotation(1); // Landscape
+    display->setRotation(3); // Landscape flipped (180° rotated)
     
     // Allocate back buffer
     if (!allocateBackBuffer()) {

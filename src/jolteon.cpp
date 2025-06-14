@@ -607,8 +607,14 @@ void jolteon_display_splash_screen(IDisplay& display)
     
     // Reset all text settings to defaults for menu system
     display.setTextColor(0xFFFF); // White text
-    display.setTextSize(1);       // Default size
+    display.setTextSize(2);       // Set to size 2 for better menu visibility
     display.setCursor(0, 0);      // Reset cursor
+    
+    // Add a small test to verify text rendering works after splash
+    display.setCursor(10, 10);
+    display.print("Menu Loading...");
+    delay(500); // Brief pause to show the text
+    display.fillScreen(0x0000); // Clear again for menu
     
     Serial.println("Display reset complete - ready for menu system");
 }

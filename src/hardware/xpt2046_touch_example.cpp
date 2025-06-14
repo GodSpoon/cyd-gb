@@ -27,8 +27,8 @@ void demonstrateXPT2046Touch() {
     touch1.setScreenSize(320, 240);              // Set screen dimensions
     touch1.setDebouncing(true, 200);             // Enable debouncing with 200ms delay
     
-    // Set rotation for landscape mode (default is already 1)
-    touch1.setRotation(1); // 0=Portrait, 1=Landscape, 2=Portrait flipped, 3=Landscape flipped
+    // Set rotation for landscape flipped mode (default is already 3)
+    touch1.setRotation(3); // 0=Portrait, 1=Landscape, 2=Portrait flipped, 3=Landscape flipped
     
     Serial.printf("Touch initialized - Rotation: %d\n", touch1.getCurrentRotation());
     
@@ -105,7 +105,7 @@ void demonstrateMultipleTouch() {
     
     if (primary_ok) {
         // Configure primary touch for landscape gaming
-        primaryTouch.setRotation(1);
+        primaryTouch.setRotation(3);
         primaryTouch.setScreenSize(320, 240);
         primaryTouch.setCalibration(200, 3900, 200, 3900);
         Serial.println("Primary touch configured for gaming");

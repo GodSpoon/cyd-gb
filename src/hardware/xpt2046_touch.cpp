@@ -31,7 +31,7 @@ private:
     uint8_t cs_pin;
     uint8_t irq_pin;
     bool initialized = false;
-    uint8_t current_rotation = 1; // Default to landscape
+    uint8_t current_rotation = 3; // Default to landscape flipped (180° rotated)
     unsigned long last_touch_time = 0;
     
     // Calibration settings
@@ -85,15 +85,15 @@ private:
                 result.y = screen.height - mapped_y;
                 break;
                 
-            case 3: // Landscape flipped (270° clockwise)
-                result.x = screen.width - mapped_y;
+            case 3: // Landscape flipped (270° clockwise) with horizontal mirroring
+                result.x = mapped_y;  // Adjusted for display horizontal mirroring (MX=1)
                 result.y = mapped_x;
                 break;
                 
             default:
-                // Default to landscape rotation
-                result.x = mapped_y;
-                result.y = screen.height - mapped_x;
+                // Default to landscape flipped rotation with horizontal mirroring
+                result.x = mapped_y;  // Adjusted for display horizontal mirroring (MX=1)
+                result.y = mapped_x;
                 break;
         }
         
@@ -157,7 +157,7 @@ public:
         // Initialize the touchscreen
         touchscreen->begin();
         
-        // Set default rotation to landscape
+        // Set default rotation to landscape flipped (180° rotated)
         touchscreen->setRotation(current_rotation);
         
         initialized = true;

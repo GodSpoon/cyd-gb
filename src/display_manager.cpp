@@ -15,7 +15,7 @@ bool DisplayManager::init() {
     Serial.println("DisplayManager: About to clear screen...");
     tft.fillScreen(TFT_BLACK);
     Serial.println("DisplayManager: About to set rotation...");
-    tft.setRotation(1); // Landscape mode
+    tft.setRotation(3); // Landscape flipped mode (180° rotated)
     Serial.println("DisplayManager: Basic TFT operations completed");
     
     // Test basic display functionality

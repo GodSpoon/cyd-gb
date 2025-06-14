@@ -216,13 +216,13 @@ Result<void> EmulatorContext::runMenu() {
         display_->setCursor(0, 0);  // Reset cursor to origin
         
         Serial.println("EmulatorContext: Setting up menu text");
-        display_->setTextSize(3);  // Larger text size
+        display_->setTextSize(2);  // Larger text size for better visibility
         display_->setTextColor(0xFFFF);  // Force white color
         display_->setCursor(10, 10);
         Serial.println("EmulatorContext: About to print 'Select ROM:'");
         display_->print("Select ROM:");
         
-        Serial.println("EmulatorContext: Menu header displayed - forcing another test");
+        Serial.println("EmulatorContext: Menu header displayed - verifying with test text");
         
         // Force additional test text to ensure display is working
         display_->setTextColor(0xF800);  // Force red color
@@ -233,11 +233,11 @@ Result<void> EmulatorContext::runMenu() {
         
         // Show ROM list
         Serial.println("EmulatorContext: Displaying ROM list");
-        display_->setTextSize(2);  // Larger text for ROM list
+        display_->setTextSize(1);  // Smaller text for ROM list to fit more items
         for (size_t i = 0; i < rom_files.size() && i < 8; ++i) {  // Limit to 8 visible items
-            display_->setCursor(10, 50 + i * 25);  // More spacing
+            display_->setCursor(10, 80 + i * 15);  // Tighter spacing for smaller text
             if (i == selected_index) {
-                display_->setTextColor(0xF800);  // Force red color
+                display_->setTextColor(0xF800);  // Force red color for selection
                 display_->print("> ");
             } else {
                 display_->setTextColor(0xFFFF);  // Force white color
@@ -246,10 +246,10 @@ Result<void> EmulatorContext::runMenu() {
             
             // Truncate long filenames
             const char* filename = rom_files[i].c_str();
-            if (strlen(filename) > 30) {
-                char truncated[31];
-                strncpy(truncated, filename, 27);
-                strcpy(truncated + 27, "...");
+            if (strlen(filename) > 40) {  // Increased limit for smaller text
+                char truncated[41];
+                strncpy(truncated, filename, 37);
+                strcpy(truncated + 37, "...");
                 display_->print(truncated);
                 Serial.printf("EmulatorContext: Displayed ROM %d: %s\n", (int)i, truncated);
             } else {
@@ -260,10 +260,11 @@ Result<void> EmulatorContext::runMenu() {
         
         if (rom_files.empty()) {
             Serial.println("EmulatorContext: No ROM files found, displaying error message");
-            display_->setCursor(10, 50);
-            display_->setTextColor(0xF800);  // Force red color
-            display_->print("No ROM files found!");
             display_->setCursor(10, 80);
+            display_->setTextColor(0xF800);  // Force red color
+            display_->setTextSize(1);
+            display_->print("No ROM files found!");
+            display_->setCursor(10, 100);
             display_->setTextColor(0xFFFF);  // Force white color
             display_->print("Add .gb files to SD card");
         }
@@ -272,7 +273,7 @@ Result<void> EmulatorContext::runMenu() {
         Serial.println("EmulatorContext: Adding forced test text to verify display");
         display_->setCursor(10, 200);
         display_->setTextColor(0x07E0);  // Force green color
-        display_->setTextSize(2);
+        display_->setTextSize(1);
         display_->print("TEXT TEST - VISIBLE?");
         
         Serial.println("EmulatorContext: Menu display completed");

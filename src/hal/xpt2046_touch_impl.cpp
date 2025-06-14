@@ -78,8 +78,8 @@ TouchPoint XPT2046TouchImpl::mapRawToScreen(const TS_Point& raw) {
             result.x = SCREEN_WIDTH - screen_x;
             result.y = SCREEN_HEIGHT - screen_y;
             break;
-        case 3: // Landscape flipped
-            result.x = SCREEN_WIDTH - screen_x;
+        case 3: // Landscape flipped with horizontal mirroring
+            result.x = screen_x;  // Adjusted for display horizontal mirroring (MX=1)
             result.y = SCREEN_HEIGHT - screen_y;
             break;
         default:
