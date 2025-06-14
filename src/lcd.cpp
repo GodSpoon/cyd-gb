@@ -366,6 +366,13 @@ static void render_line(void *arg)
             if (skip_frames) {
                 --skip_frames;
             } else {
+                // DEBUG: Log frame completion
+                static int frame_debug_counter = 0;
+                frame_debug_counter++;
+                if (frame_debug_counter % 300 == 0) {
+                    Serial.printf("LCD: Frame %d completed, calling jolteon_end_frame()\n", frame_debug_counter);
+                }
+                
                 // Render the completed frame
                 jolteon_end_frame();
             }

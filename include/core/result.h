@@ -15,7 +15,8 @@ enum class EmulatorError : uint8_t {
     MEMORY_ALLOCATION_FAILED,
     MEMORY_EXHAUSTED,
     INVALID_STATE,
-    HARDWARE_ERROR
+    HARDWARE_ERROR,
+    MEMORY_ERROR
 };
 
 // Forward declaration for specialization
@@ -259,6 +260,8 @@ inline const char* error_to_string(EmulatorError error) {
             return "INVALID_STATE";
         case EmulatorError::HARDWARE_ERROR:
             return "HARDWARE_ERROR";
+        case EmulatorError::MEMORY_ERROR:
+            return "MEMORY_ERROR";
         default:
             return "UNKNOWN_ERROR";
     }

@@ -1666,7 +1666,7 @@ uint32_t cpu_cycle(void)
 		case 0x9B:	/* SBC E */
 			t = flag_C + c.E;
 			set_H(((c.A&0xF) - (c.E&0xF) - flag_C) < 0);
-		 set_C((c.A - c.E - flag_C) < 0);
+			set_C((c.A - c.E - flag_C) < 0);
 			set_N(1);
 			c.A -= t;
 			set_Z(!c.A);
@@ -1752,7 +1752,8 @@ uint32_t cpu_cycle(void)
 		case 0xA5:	/* AND L */
 			c.A &= c.L;
 			set_Z(!c.A);
-		 set_N(0);
+			set_H(1);
+			set_N(0);
 			set_C(0);
 			c.cycles += 1;
 		break;
@@ -1939,8 +1940,7 @@ uint32_t cpu_cycle(void)
 		break;
 		case 0xC4:	/* CALL NZ, imm16 */
 			if(flag_Z == 0)
-			
-		{
+			{
 				c.SP -= 2;
 				mem_write_word(c.SP, c.PC+2);
 				c.PC = mem_get_word(c.PC);

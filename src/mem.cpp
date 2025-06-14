@@ -36,9 +36,20 @@ uint8_t segmented_read_byte(uint16_t addr) {
     uint8_t segment = addr >> 12;  // 4KB segments  
     uint16_t offset = addr & 0x0FFF;  // 4KB (4096 bytes = 0x1000) mask
     
-    // CRITICAL: Add bounds and null checking
-    if (segment >= 16 || !mem_segments[segment]) {
-        Serial.printf("[ERROR] segmented_read_byte: Invalid access - segment %d, addr 0x%X\n", segment, addr);
+    // CRITICAL: Add bounds and null checking with detailed error reporting
+    if (segment >= 16) {
+        Serial.printf("[ERROR] segmented_read_byte: Segment out of bounds - segment %d, addr 0x%X\n", segment, addr);
+        return 0xFF; // Return safe default value
+    }
+    
+    if (!mem_segments[segment]) {
+        Serial.printf("[ERROR] segmented_read_byte: NULL segment pointer - segment %d, addr 0x%X\n", segment, addr);
+        // Log all segment states for debugging
+        Serial.print("mmu_init: Current segment states: ");
+        for (int i = 0; i < 16; i++) {
+            Serial.printf("[%d:%s] ", i, mem_segments[i] ? "OK" : "NULL");
+        }
+        Serial.println();
         return 0xFF; // Return safe default value
     }
     
@@ -49,13 +60,44 @@ void segmented_write_byte(uint16_t addr, uint8_t value) {
     uint8_t segment = addr >> 12;  // 4KB segments
     uint16_t offset = addr & 0x0FFF;  // 4KB mask
     
-    // CRITICAL: Add bounds and null checking
-    if (segment >= 16 || !mem_segments[segment]) {
-        Serial.printf("[ERROR] segmented_write_byte: Invalid access - segment %d, addr 0x%X\n", segment, addr);
+    // CRITICAL: Add bounds and null checking with detailed error reporting
+    if (segment >= 16) {
+        Serial.printf("[ERROR] segmented_write_byte: Segment out of bounds - segment %d, addr 0x%X\n", segment, addr);
+        return; // Safely ignore write to invalid memory
+    }
+    
+    if (!mem_segments[segment]) {
+        Serial.printf("[ERROR] segmented_write_byte: NULL segment pointer - segment %d, addr 0x%X\n", segment, addr);
+        // Log all segment states for debugging
+        Serial.print("mmu_init: Current segment states: ");
+        for (int i = 0; i < 16; i++) {
+            Serial.printf("[%d:%s] ", i, mem_segments[i] ? "OK" : "NULL");
+        }
+        Serial.println();
         return; // Safely ignore write to invalid memory
     }
     
     mem_segments[segment][offset] = value;
+}
+
+// CRITICAL: Add segment validation function to detect memory corruption
+bool validate_memory_segments() {
+    for (int i = 0; i < 16; i++) {
+        if (!mem_segments[i]) {
+            Serial.printf("[ERROR] validate_memory_segments: Segment %d is NULL!\n", i);
+            return false;
+        }
+        
+        // Basic sanity check - verify we can read/write to the segment
+        uint8_t test_val = mem_segments[i][0];
+        mem_segments[i][0] = 0xAB; // Test write
+        if (mem_segments[i][0] != 0xAB) {
+            Serial.printf("[ERROR] validate_memory_segments: Segment %d failed write test!\n", i);
+            return false;
+        }
+        mem_segments[i][0] = test_val; // Restore original value
+    }
+    return true;
 }
 
 uint8_t mem_get_byte(uint16_t i)
@@ -85,7 +127,7 @@ uint8_t mem_get_byte(uint16_t i)
 		uint16_t seg_offset = echo_offset & 0x0FFF;
 		
 		if (segment >= 16 || !mem_segments[segment]) {
-			Serial.printf("[ERROR] mem_get_byte: Invalid echo segment %d for address 0x%X\n", segment, i);
+			Serial.printf("[ERROR] mem_get_byte: Invalid echo segment %d for address 0x%X (ptr: %p)\\n", segment, i, mem_segments[segment]);
 			return 0xFF;
 		}
 		return mem_segments[segment][seg_offset];
@@ -129,8 +171,8 @@ void mem_write_byte(uint16_t d, uint8_t i)
 		uint8_t segment = (echo_offset >> 12) + 12; // Start at segment 12 (0xC000)
 		uint16_t seg_offset = echo_offset & 0x0FFF;
 		
-		if (segment >= 16 || !mem_segments[segment]) {
-			Serial.printf("[ERROR] mem_write_byte: Invalid echo segment %d for address 0x%X\n", segment, d);
+		if (segment >= 16 || !mem_segments[segment]) { // Segment 12 (0xCxxx) or 13 (0xDxxx)
+			Serial.printf("[ERROR] mem_write_byte: Invalid echo segment %d for address 0x%X (ptr: %p)\\n", segment, d, mem_segments[segment]);
 			return;
 		}
 		mem_segments[segment][seg_offset] = i;
@@ -226,18 +268,46 @@ bool mmu_init(const uint8_t* bootrom)
 	Serial.printf("mmu_init: Free heap before allocation: %d bytes\n", ESP.getFreeHeap());
 	Serial.printf("mmu_init: Largest free block: %d bytes\n", ESP.getMaxAllocHeap());
 	
+	// CRITICAL: Check heap integrity before allocation
+	if (!heap_caps_check_integrity_all(false)) {
+		Serial.println("[ERROR] mmu_init: Heap integrity check failed before allocation!");
+		analyze_memory_fragmentation();
+		return false;
+	}
+	
 	// Always use segmented memory for ESP32 constraints
 	Serial.println("mmu_init: Using segmented memory allocation for ESP32...");
 	
-	// Allocate 16 segments of 4KB each (total 64KB)
+	// CRITICAL: Initialize all segment pointers to null first
+	for (int i = 0; i < 16; i++) {
+		mem_segments[i] = nullptr;
+	}
+	
+	// Allocate 16 segments of 4KB each (total 64KB) with improved error handling
 	for (int i = 0; i < 16; i++) {
 		// Feed watchdog during memory allocation to prevent timeout
 		yield(); // Reset watchdog and allow other tasks to run
 		
+		Serial.printf("mmu_init: Attempting to allocate segment %d (0x%X - 0x%X)...\n", i, i * 0x1000, (i * 0x1000) + 0xFFF);
+		
+		// CRITICAL: Try allocation with multiple strategies for reliability
 		mem_segments[i] = (uint8_t*)calloc(1, 0x1000); // 4KB per segment
+		
+		// If calloc fails, try malloc + memset as fallback
+		if (!mem_segments[i]) {
+			Serial.printf("mmu_init: calloc failed for segment %d, trying malloc fallback...\n", i);
+			mem_segments[i] = (uint8_t*)malloc(0x1000);
+			if (mem_segments[i]) {
+				memset(mem_segments[i], 0, 0x1000); // Zero it manually
+			}
+		}
+		
 		if (!mem_segments[i]) {
 			Serial.printf("[ERROR] mmu_init: Failed to allocate segment %d\n", i);
+			Serial.printf("mmu_init: Free heap at failure: %d bytes\n", ESP.getFreeHeap());
+			Serial.printf("mmu_init: Largest free block at failure: %d bytes\n", ESP.getMaxAllocHeap());
 			analyze_memory_fragmentation(); // Log detailed memory fragmentation
+			
 			// Clean up previously allocated segments
 			for (int j = 0; j < i; j++) {
 				if (mem_segments[j]) {
@@ -247,9 +317,68 @@ bool mmu_init(const uint8_t* bootrom)
 			}
 			return false;
 		}
-		Serial.printf("mmu_init: Segment %d allocated at %p\n", i, mem_segments[i]);
+		
+		// CRITICAL: Validate the allocated pointer
+		if ((uintptr_t)mem_segments[i] < 0x1000) {
+			Serial.printf("[ERROR] mmu_init: Invalid pointer for segment %d: %p\n", i, mem_segments[i]);
+			free(mem_segments[i]);
+			mem_segments[i] = nullptr;
+			
+			// Clean up previously allocated segments
+			for (int j = 0; j < i; j++) {
+				if (mem_segments[j]) {
+					free(mem_segments[j]);
+					mem_segments[j] = nullptr;
+				}
+			}
+			return false;
+		}
+		
+		Serial.printf("mmu_init: Segment %d allocated at %p. Free heap: %d bytes. Largest free block: %d bytes.\n", i, mem_segments[i], ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 	}
 	
+	// CRITICAL: Verify all segments are properly allocated before proceeding
+	Serial.println("mmu_init: Verifying all segment allocations...");
+	for (int i = 0; i < 16; i++) {
+		if (!mem_segments[i]) {
+			Serial.printf("[ERROR] mmu_init: Segment %d is null after allocation loop!\n", i);
+			// Clean up all segments
+			for (int j = 0; j < 16; j++) {
+				if (mem_segments[j]) {
+					free(mem_segments[j]);
+					mem_segments[j] = nullptr;
+				}
+			}
+			return false;
+		}
+	}	Serial.println("mmu_init: All segments verified successfully.");
+	
+	// CRITICAL: Check heap integrity after allocation  
+	if (!heap_caps_check_integrity_all(false)) {
+		Serial.println("[ERROR] mmu_init: Heap integrity check failed after allocation!");
+		// Clean up all segments
+		for (int i = 0; i < 16; i++) {
+			if (mem_segments[i]) {
+				free(mem_segments[i]);
+				mem_segments[i] = nullptr;
+			}
+		}
+		return false;
+	}
+	
+	// CRITICAL: Final segment validation test
+	if (!validate_memory_segments()) {
+		Serial.println("[ERROR] mmu_init: Final memory segment validation failed!");
+		// Clean up all segments
+		for (int i = 0; i < 16; i++) {
+			if (mem_segments[i]) {
+				free(mem_segments[i]);
+				mem_segments[i] = nullptr;
+			}
+		}
+		return false;
+	}
+
 	if (!mbc_init()) {
 		Serial.println("mmu_init: mbc_init failed");
 		// Clean up segments

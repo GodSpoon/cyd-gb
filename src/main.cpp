@@ -16,7 +16,6 @@
 #include "cpu.h"
 #include "lcd.h"
 #include "jolteon.h"
-#include "menu.h"
 #include "core/framebuffer_manager.h"
 #include "mbc.h"
 #include "error_handler.h"
@@ -38,7 +37,6 @@ std::unique_ptr<EmulatorContext> emulator_context;
 
 // Legacy variables (to be removed as refactoring continues)
 static bool emulator_initialized = false;
-FramebufferManager framebuffer_manager;
 
 // Legacy FreeRTOS task functions (deprecated - EmulatorContext handles state machine now)
 // These functions are kept for reference but will be removed in future refactoring
@@ -96,13 +94,6 @@ void setup() {
     } else {
         Serial.println("EmulatorContext initialized successfully!");
         Serial.printf("Current state: %d\n", (int)emulator_context->getCurrentState());
-        
-        // Inject framebuffer manager dependencies into legacy modules
-        Serial.println("Injecting framebuffer manager into legacy modules...");
-        lcd_set_framebuffer_manager(&framebuffer_manager);
-        cpu_set_framebuffer_manager(&framebuffer_manager);
-        mbc_set_framebuffer_manager(&framebuffer_manager);
-        Serial.println("Dependency injection complete");
     }
     
     Serial.println("Setup complete - entering main loop");

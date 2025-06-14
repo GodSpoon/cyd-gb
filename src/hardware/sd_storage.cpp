@@ -67,8 +67,10 @@ StorageError SDStorage::init() {
     
     Serial.println("SDStorage: Initializing SD card...");
     
-    // Configure SPI for SD card pins first
-    Serial.println("SDStorage: Configuring SPI for SD card (SCLK=18, MISO=19, MOSI=23)");
+    // Reconfigure SPI for SD card pins (touch may have changed it)
+    // From board config: TF uses MOSI=23, MISO=19, SCLK=18
+    Serial.println("SDStorage: Reconfiguring SPI for SD card (SCLK=18, MISO=19, MOSI=23)");
+    SPI.end(); // End any existing SPI configuration
     SPI.begin(18, 19, 23);  // SD card pins: SCLK, MISO, MOSI
     
     // Initialize SD card with explicit CS pin

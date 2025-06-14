@@ -418,15 +418,8 @@ void jolteon_end_frame_with_display(IDisplay& display)
         // Swap buffers to make the current back buffer visible
         g_framebuffer_manager->swap_buffers();
         
-        // Get the front buffer for display
-        const uint16_t* front_buffer = g_framebuffer_manager->get_front_buffer();
-        
-        if (front_buffer) {
-            // Use drawBuffer to render the Game Boy screen in the center
-            display.drawBuffer(front_buffer, CENTER_X, CENTER_Y, GAMEBOY_WIDTH, GAMEBOY_HEIGHT);
-        } else {
-            Serial.println("ERROR: Front buffer is NULL in jolteon_end_frame()");
-        }
+        // Don't render directly here - let EmulatorContext handle the display
+        // This ensures consistent rendering through a single pipeline
     } else {
         // Fallback to legacy pixel buffer
         uint16_t* pixels = jolteon_get_framebuffer();

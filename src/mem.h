@@ -20,6 +20,9 @@ inline uint16_t mem_get_word(uint16_t i) { return mem_get_byte(i) | (mem_get_byt
 void mem_write_byte(uint16_t, uint8_t);
 inline void mem_write_word(uint16_t d, uint16_t i) { mem_write_byte(d, i&0xFF); mem_write_byte(d+1, i>>8); }
 
+// CRITICAL: Add memory validation function
+bool validate_memory_segments();
+
 #ifdef __cplusplus
 }
 #endif

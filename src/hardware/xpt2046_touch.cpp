@@ -151,13 +151,12 @@ public:
             return false;
         }
         
-        // Initialize SPI for touch controller
-        // NOTE: We do NOT call SPI.begin() here because:
-        // 1. The SD card initialization configures SPI with its own pins first
-        // 2. The XPT2046_Touchscreen library will use the default SPI instance 
-        // 3. Both peripherals need to share the same SPI bus but with different CS pins
-        // 4. The SD card pins (MOSI=23, MISO=19, SCLK=18) are compatible with touch
-        Serial.println("XPT2046Touch: Using existing SPI configuration from SD card");
+        // The XPT2046_Touchscreen library uses the default SPI instance
+        // Configure SPI for touch controller pins based on board configuration
+        // From esp32-2432S028Rv3.json: XPT2046 uses MOSI=32, MISO=39, SCLK=25
+        Serial.println("XPT2046Touch: Configuring SPI for touch controller pins (SCLK=25, MISO=39, MOSI=32)");
+        SPI.end(); // End any existing SPI configuration
+        SPI.begin(25, 39, 32);  // Touch controller pins: SCLK, MISO, MOSI
         
         // Initialize the touchscreen
         Serial.println("XPT2046Touch: Calling touchscreen->begin()...");
@@ -192,20 +191,19 @@ public:
             return false;
         }
         
-        // Apply debouncing if enabled - TEMPORARILY DISABLED FOR DEBUGGING
-        // if (!shouldProcessTouch()) {
-        //     // Serial.println("XPT2046Touch: touched() - debouncing blocked");
-        //     return false;
-        // }
+        // Apply debouncing if enabled
+        if (!shouldProcessTouch()) {
+            return false;
+        }
         
-        // Temporarily reconfigure SPI for touch controller pins
+        // Reconfigure SPI for touch controller before reading
         SPI.end();
         SPI.begin(25, 39, 32);  // Touch controller pins: SCLK, MISO, MOSI
         
-        // Check if underlying library reports touch
+        // Use the touchscreen library
         bool lib_touched = touchscreen->touched();
         
-        // Restore SPI for SD card pins
+        // Restore SPI for SD card operations  
         SPI.end();
         SPI.begin(18, 19, 23);  // SD card pins: SCLK, MISO, MOSI
         
@@ -238,14 +236,14 @@ public:
             return result;
         }
         
-        // Temporarily reconfigure SPI for touch controller pins
+        // Reconfigure SPI for touch controller before reading
         SPI.end();
         SPI.begin(25, 39, 32);  // Touch controller pins: SCLK, MISO, MOSI
         
         // Check if screen is being touched
         bool is_touched = touchscreen->touched();
         if (!is_touched) {
-            // Restore SPI for SD card pins before returning
+            // Restore SPI for SD card operations before returning
             SPI.end();
             SPI.begin(18, 19, 23);  // SD card pins: SCLK, MISO, MOSI
             return result;
@@ -254,7 +252,7 @@ public:
         // Get raw touch coordinates
         TS_Point raw = touchscreen->getPoint();
         
-        // Restore SPI for SD card pins
+        // Restore SPI for SD card operations
         SPI.end();
         SPI.begin(18, 19, 23);  // SD card pins: SCLK, MISO, MOSI
         
