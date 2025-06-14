@@ -70,17 +70,17 @@ TouchPoint XPT2046TouchImpl::mapRawToScreen(const TS_Point& raw) {
             result.x = screen_x;
             result.y = screen_y;
             break;
-        case 1: // Landscape
-            result.x = screen_x;
-            result.y = screen_y;
+        case 1: // Landscape (90° counter-clockwise) - Inverted landscape
+            result.x = SCREEN_HEIGHT - 1 - screen_y;
+            result.y = screen_x;
             break;
-        case 2: // Portrait flipped
-            result.x = SCREEN_WIDTH - screen_x;
-            result.y = SCREEN_HEIGHT - screen_y;
+        case 2: // Portrait flipped (180°)
+            result.x = SCREEN_WIDTH - 1 - screen_x;
+            result.y = SCREEN_HEIGHT - 1 - screen_y;
             break;
-        case 3: // Landscape flipped with horizontal mirroring
-            result.x = screen_x;  // Adjusted for display horizontal mirroring (MX=1)
-            result.y = SCREEN_HEIGHT - screen_y;
+        case 3: // Landscape flipped (270°)
+            result.x = screen_y;
+            result.y = SCREEN_WIDTH - 1 - screen_x;
             break;
         default:
             result.x = screen_x;
@@ -88,9 +88,12 @@ TouchPoint XPT2046TouchImpl::mapRawToScreen(const TS_Point& raw) {
             break;
     }
     
-    // Constrain to screen bounds
-    result.x = constrain(result.x, 0, SCREEN_WIDTH - 1);
-    result.y = constrain(result.y, 0, SCREEN_HEIGHT - 1);
+    // Constrain to screen bounds (account for rotation affecting dimensions)
+    int max_x = (current_rotation == 1 || current_rotation == 3) ? SCREEN_HEIGHT - 1 : SCREEN_WIDTH - 1;
+    int max_y = (current_rotation == 1 || current_rotation == 3) ? SCREEN_WIDTH - 1 : SCREEN_HEIGHT - 1;
+    
+    result.x = constrain(result.x, 0, max_x);
+    result.y = constrain(result.y, 0, max_y);
     result.pressed = true;
     
     return result;

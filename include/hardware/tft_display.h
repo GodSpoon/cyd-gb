@@ -63,7 +63,7 @@ public:
      * 
      * Performs the following initialization steps:
      * 1. Initialize TFT_eSPI instance
-     * 2. Set rotation to landscape flipped (3)
+     * 2. Set rotation to inverted landscape (1)
      * 3. Configure backlight PWM on specified pin
      * 4. Set backlight to full brightness
      * 5. Clear screen to black

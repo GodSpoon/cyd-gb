@@ -1,5 +1,6 @@
 #include "core/emulator_context.h"
 #include "core/memory_utils.h"
+#include "hardware/xpt2046_touch.h"  // For touch configuration
 #include <Arduino.h>
 
 // Game Boy emulator includes
@@ -91,6 +92,10 @@ Result<void> EmulatorContext::initialize() {
         transitionToState(EmulatorState::ERROR);
         return Result<void>::err(EmulatorError::TOUCH_INIT_FAILED);
     }
+    
+    // Configure touch for landscape display (320x240)
+    Serial.println("EmulatorContext: Configuring touch for landscape mode...");
+    touch_->setRotation(1);  // Landscape rotation
     
     // Initialize storage
     Serial.println("EmulatorContext: Initializing storage...");
@@ -276,6 +281,11 @@ Result<void> EmulatorContext::runMenu() {
         display_->setTextSize(1);
         display_->print("TEXT TEST - VISIBLE?");
         
+        // Add touch test instructions
+        display_->setCursor(10, 215);
+        display_->setTextColor(0xFFE0);  // Yellow color
+        display_->print("Touch screen to test coordinates");
+        
         Serial.println("EmulatorContext: Menu display completed");
         menu_displayed = true;
         
@@ -283,19 +293,72 @@ Result<void> EmulatorContext::runMenu() {
         delay(100);
     }
     
-    // Handle touch input
+    // Add basic touch testing - show coordinates anywhere on screen
+    static unsigned long last_touch_debug = 0;
+    static unsigned long last_no_touch_debug = 0;
+    
+    // Test basic touch detection every 1 second even when no touch
+    if (millis() - last_no_touch_debug > 1000) {
+        bool is_touched = touch_->touched();
+        Serial.printf("EmulatorContext: Touch poll - touched: %s\n", is_touched ? "YES" : "NO");
+        last_no_touch_debug = millis();
+    }
+    
+    if (touch_->touched()) {
+        TouchPoint point = touch_->getPoint();
+        if (point.pressed && millis() - last_touch_debug > 200) {  // Debounce debug output
+            last_touch_debug = millis();
+            Serial.printf("EmulatorContext: DEBUG - Raw touch at (%d, %d)\n", point.x, point.y);
+            
+            // Show touch coordinates on screen for debugging
+            // Clear debug area by overwriting with black pixels
+            for (int y = 200; y < 240; y++) {
+                for (int x = 200; x < 320; x++) {
+                    display_->drawPixel(x, y, 0x0000);
+                }
+            }
+            display_->setCursor(200, 200);
+            display_->setTextColor(0xFFFF);
+            display_->setTextSize(1);
+            display_->print("Touch: ");
+            display_->print(point.x);
+            display_->print(",");
+            display_->print(point.y);
+        }
+    }
+    
+    // Handle ROM selection touch input
     if (touch_->touched()) {
         TouchPoint point = touch_->getPoint();
         if (point.pressed) {
             Serial.printf("EmulatorContext: Touch detected at (%d, %d)\n", point.x, point.y);
             
+            // Add visual feedback for any touch
+            display_->drawPixel(point.x, point.y, 0xF800);  // Red dot
+            display_->drawPixel(point.x+1, point.y, 0xF800);  // Make it slightly bigger
+            display_->drawPixel(point.x, point.y+1, 0xF800);
+            display_->drawPixel(point.x+1, point.y+1, 0xF800);
+            
             if (!rom_files.empty()) {
                 // Calculate which ROM was selected based on touch Y coordinate
-                if (point.y >= 40 && point.y < 40 + rom_files.size() * 20) {
-                    int touch_index = (point.y - 40) / 20;
+                // ROMs are displayed starting at Y=80 with 15-pixel spacing (smaller text)
+                const int MENU_START_Y = 80;
+                const int MENU_ITEM_HEIGHT = 15;
+                
+                if (point.y >= MENU_START_Y && point.y < MENU_START_Y + rom_files.size() * MENU_ITEM_HEIGHT) {
+                    int touch_index = (point.y - MENU_START_Y) / MENU_ITEM_HEIGHT;
                     if (touch_index >= 0 && touch_index < (int)rom_files.size()) {
+                        Serial.printf("EmulatorContext: Touch index calculated: %d (Y=%d, calculated Y range: %d-%d)\n", 
+                                     touch_index, point.y, MENU_START_Y, MENU_START_Y + rom_files.size() * MENU_ITEM_HEIGHT);
+                        
                         selected_index = touch_index;
                         Serial.printf("EmulatorContext: Selected ROM: %s\n", rom_files[selected_index].c_str());
+                        
+                        // Add visual feedback - redraw menu with updated selection
+                        menu_displayed = false;  // Force menu redraw with new selection
+                        
+                        // Add a small delay to show selection feedback before loading
+                        delay(300);
                         
                         // Load and start the ROM
                         std::string rom_path = "/" + rom_files[selected_index];

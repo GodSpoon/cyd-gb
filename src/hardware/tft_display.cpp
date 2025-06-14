@@ -29,7 +29,7 @@ public:
         , current_brightness(255)
         , is_initialized(false)
         , is_enabled(false)
-        , current_rotation(0) {  // Try rotation 0 for portrait mode, then we'll use setRotation in init
+        , current_rotation(1) {  // Start with inverted landscape mode, then we'll use setRotation in init
     }
 
     bool init() {
@@ -62,7 +62,11 @@ public:
         tft.writedata(0x55);     // 16-bit RGB565
         delay(10);
         tft.writecommand(0x36); // Memory access control
-        tft.writedata(0x40);    // MY=0, MX=1, MV=0 - horizontal mirroring to fix reversed display
+        
+        // Set a basic MADCTL value for initial setup - will be reconfigured after rotation
+        uint8_t madctl = 0x00;
+        Serial.printf("ST7789: Initial Memory Access Control Register (0x36) = 0x%02X\n", madctl);
+        tft.writedata(madctl);
         delay(10);
         tft.writecommand(0x20); // Display inversion OFF - inverts the current color scheme
         delay(10);
@@ -73,10 +77,45 @@ public:
         
         Serial.println("ST7789 initialization completed");
 
-        // Set rotation (landscape mode) - rotation 3 for landscape flipped (180° from original)
-        current_rotation = 3;
+        // Set rotation (landscape mode) - rotation 1 for inverted landscape (90° counter-clockwise)
+        current_rotation = 1;
         tft.setRotation(current_rotation);
         Serial.printf("Display size after rotation: %dx%d\n", tft.width(), tft.height());
+        
+        // IMPORTANT: Apply mirroring settings AFTER rotation to prevent TFT_eSPI from overriding them
+        Serial.println("Applying mirroring settings after rotation...");
+        tft.writecommand(0x36); // Memory access control
+        
+        // Reconfigure memory access control after rotation
+        uint8_t madctl_final = 0x00;
+        
+        // Start with the rotation 1 base value and modify it
+        // Rotation 1 typically sets MADCTL to 0x60 (MV=1, MX=1, MY=0)
+        // We need to adjust based on our mirroring requirements
+#ifdef DISPLAY_MIRROR_X
+        if (DISPLAY_MIRROR_X) {
+            // For rotation 1, we want to DISABLE MX to correct the mirroring
+            madctl_final = 0x20; // MV=1, MX=0, MY=0 - keeps rotation but fixes X mirroring
+            Serial.println("ST7789: X-axis mirroring correction applied (MX=0 for rotation 1)");
+        } else {
+            madctl_final = 0x60; // MV=1, MX=1, MY=0 - standard rotation 1
+            Serial.println("ST7789: Standard rotation 1 (MX=1)");
+        }
+#else
+        madctl_final = 0x60; // Default rotation 1 value
+        Serial.println("ST7789: DISPLAY_MIRROR_X not defined, using standard rotation 1");
+#endif
+
+#ifdef DISPLAY_MIRROR_Y
+        if (DISPLAY_MIRROR_Y) {
+            madctl_final ^= 0x80; // Toggle MY bit for vertical mirroring
+            Serial.println("ST7789: Y-axis mirroring applied");
+        }
+#endif
+        
+        Serial.printf("ST7789: Final Memory Access Control Register (0x36) = 0x%02X\n", madctl_final);
+        tft.writedata(madctl_final);
+        delay(10);
         
         // Load and setup fonts for text rendering
         Serial.println("Setting up fonts for text rendering...");

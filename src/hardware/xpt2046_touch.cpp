@@ -1,10 +1,9 @@
 #include "hardware/xpt2046_touch.h"
 #include <XPT2046_Touchscreen.h>
+#include <SPI.h>
 #include <Arduino.h>
 #include <memory>
 #include "core/memory_utils.h"
-
-// Default pin definitions
 static constexpr uint8_t DEFAULT_TOUCH_CS = 33;
 static constexpr uint8_t DEFAULT_TOUCH_IRQ = 36;
 
@@ -31,7 +30,7 @@ private:
     uint8_t cs_pin;
     uint8_t irq_pin;
     bool initialized = false;
-    uint8_t current_rotation = 3; // Default to landscape flipped (180° rotated)
+    uint8_t current_rotation = 1; // Default to inverted landscape (90° counter-clockwise rotation)
     unsigned long last_touch_time = 0;
     
     // Calibration settings
@@ -127,8 +126,9 @@ public:
      * Constructor with pin configuration
      */
     Impl(uint8_t cs, uint8_t irq) : cs_pin(cs), irq_pin(irq) {
-        // Create touchscreen instance with specified pins
-        touchscreen = make_unique<XPT2046_Touchscreen>(cs_pin, irq_pin);
+        // Don't create the touchscreen object here - defer to init()
+        // This prevents hardware access during constructor
+        Serial.printf("XPT2046Touch::Impl constructor with CS=%d, IRQ=%d\n", cs, irq);
     }
     
     /**
@@ -142,19 +142,44 @@ public:
         
         Serial.printf("XPT2046Touch: Initializing with CS=%d, IRQ=%d\n", cs_pin, irq_pin);
         
+        // Create touchscreen instance now (not in constructor)
+        Serial.println("XPT2046Touch: Creating XPT2046_Touchscreen object...");
+        touchscreen = make_unique<XPT2046_Touchscreen>(cs_pin, irq_pin);
+        
         if (!touchscreen) {
-            Serial.println("XPT2046Touch: Touchscreen object not created");
+            Serial.println("XPT2046Touch: Failed to create touchscreen object");
             return false;
         }
         
-        // Initialize the touchscreen
-        touchscreen->begin();
+        // Initialize SPI for touch controller
+        // NOTE: We do NOT call SPI.begin() here because:
+        // 1. The SD card initialization configures SPI with its own pins first
+        // 2. The XPT2046_Touchscreen library will use the default SPI instance 
+        // 3. Both peripherals need to share the same SPI bus but with different CS pins
+        // 4. The SD card pins (MOSI=23, MISO=19, SCLK=18) are compatible with touch
+        Serial.println("XPT2046Touch: Using existing SPI configuration from SD card");
         
-        // Set default rotation to landscape flipped (180° rotated)
+        // Initialize the touchscreen
+        Serial.println("XPT2046Touch: Calling touchscreen->begin()...");
+        try {
+            touchscreen->begin();
+            Serial.println("XPT2046Touch: touchscreen->begin() completed");
+        } catch (...) {
+            Serial.println("XPT2046Touch: Exception in touchscreen->begin()");
+            return false;
+        }
+        
+        // Set default rotation to inverted landscape (90° counter-clockwise)
         touchscreen->setRotation(current_rotation);
         
         initialized = true;
         Serial.println("XPT2046Touch: Initialization complete");
+        
+        // Test if touch controller is responding
+        Serial.println("XPT2046Touch: Testing touch controller response...");
+        bool test_touch = touchscreen->touched();
+        Serial.printf("XPT2046Touch: Initial touch state: %s\n", test_touch ? "touched" : "not touched");
+        
         return true;
     }
     
@@ -162,21 +187,40 @@ public:
      * Check if screen is currently being touched
      */
     bool touched() {
-        if (!initialized || !touchscreen) return false;
-        
-        // Apply debouncing if enabled
-        if (!shouldProcessTouch()) {
+        if (!initialized || !touchscreen) {
+            Serial.println("XPT2046Touch: touched() called but not initialized or touchscreen is null");
             return false;
         }
+        
+        // Apply debouncing if enabled - TEMPORARILY DISABLED FOR DEBUGGING
+        // if (!shouldProcessTouch()) {
+        //     // Serial.println("XPT2046Touch: touched() - debouncing blocked");
+        //     return false;
+        // }
+        
+        // Temporarily reconfigure SPI for touch controller pins
+        SPI.end();
+        SPI.begin(25, 39, 32);  // Touch controller pins: SCLK, MISO, MOSI
         
         // Check if underlying library reports touch
-        if (!touchscreen->touched()) {
+        bool lib_touched = touchscreen->touched();
+        
+        // Restore SPI for SD card pins
+        SPI.end();
+        SPI.begin(18, 19, 23);  // SD card pins: SCLK, MISO, MOSI
+        
+        if (!lib_touched) {
+            // Only log occasionally to reduce spam
+            static unsigned long last_no_touch_log = 0;
+            if (millis() - last_no_touch_log > 5000) {
+                Serial.println("XPT2046Touch: No touch detected");
+                last_no_touch_log = millis();
+            }
             return false;
         }
-        
-        // Validate coordinates to filter out noise/invalid readings
-        TS_Point raw = touchscreen->getPoint();
-        return isValidTouch(raw.x, raw.y);
+
+        Serial.println("XPT2046Touch: Touch detected - validating coordinates");
+        return true;
     }
     
     /**
@@ -194,17 +238,29 @@ public:
             return result;
         }
         
+        // Temporarily reconfigure SPI for touch controller pins
+        SPI.end();
+        SPI.begin(25, 39, 32);  // Touch controller pins: SCLK, MISO, MOSI
+        
         // Check if screen is being touched
-        if (!touchscreen->touched()) {
+        bool is_touched = touchscreen->touched();
+        if (!is_touched) {
+            // Restore SPI for SD card pins before returning
+            SPI.end();
+            SPI.begin(18, 19, 23);  // SD card pins: SCLK, MISO, MOSI
             return result;
         }
         
         // Get raw touch coordinates
         TS_Point raw = touchscreen->getPoint();
         
+        // Restore SPI for SD card pins
+        SPI.end();
+        SPI.begin(18, 19, 23);  // SD card pins: SCLK, MISO, MOSI
+        
         // Validate touch coordinates
         if (!isValidTouch(raw.x, raw.y)) {
-            // Coordinates are invalid (noise), return no-touch result silently
+            Serial.printf("XPT2046Touch: Invalid coordinates (%d, %d) - rejecting\n", raw.x, raw.y);
             return result;
         }
         
@@ -214,9 +270,9 @@ public:
         // Transform coordinates with rotation
         result = transformCoordinates(raw.x, raw.y);
         
-        // Debug logging for touch coordinates (uncomment if needed for debugging)
-        // Serial.printf("XPT2046Touch: Raw(%d,%d) -> Screen(%d,%d) [rotation=%d]\n", 
-        //               raw.x, raw.y, result.x, result.y, current_rotation);
+        // Debug logging for touch coordinates (enabled for debugging)
+        Serial.printf("XPT2046Touch: Raw(%d,%d) -> Screen(%d,%d) [rotation=%d]\n", 
+                      raw.x, raw.y, result.x, result.y, current_rotation);
         
         return result;
     }

@@ -67,7 +67,13 @@ StorageError SDStorage::init() {
     
     Serial.println("SDStorage: Initializing SD card...");
     
-    if (!SD.begin()) {
+    // Configure SPI for SD card pins first
+    Serial.println("SDStorage: Configuring SPI for SD card (SCLK=18, MISO=19, MOSI=23)");
+    SPI.begin(18, 19, 23);  // SD card pins: SCLK, MISO, MOSI
+    
+    // Initialize SD card with explicit CS pin
+    // From board config: TF_CS=5, uses default SPI pins
+    if (!SD.begin(5)) {  // CS pin 5
         Serial.println("SDStorage: SD card initialization failed");
         return StorageError::INIT_FAILED;
     }

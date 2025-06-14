@@ -11,7 +11,7 @@ bool TFTDisplayImpl::init() {
     
     // Basic TFT initialization
     tft.begin();
-    tft.setRotation(3); // Default landscape flipped mode (180° rotated)
+    tft.setRotation(1); // Inverted landscape mode (90° counter-clockwise rotation)
     tft.fillScreen(TFT_BLACK);
     
     // Test display functionality

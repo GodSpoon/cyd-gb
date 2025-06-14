@@ -27,7 +27,7 @@ void testDisplayInterface(IDisplay& display) {
     
     // Test drawing operations
     display.fillScreen(0x0000);  // Black
-    display.setRotation(3);
+    display.setRotation(1);
     
     display.setTextColor(0xFFFF);  // White
     display.setTextSize(2);

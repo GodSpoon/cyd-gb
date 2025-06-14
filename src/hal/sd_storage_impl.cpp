@@ -5,7 +5,9 @@ StorageError SDStorageImpl::init() {
     
     Serial.println("SDStorageImpl: Initializing SD card...");
     
-    if (!SD.begin()) {
+    // Initialize SD card with explicit CS pin
+    // From board config: TF_CS=5, uses default SPI pins  
+    if (!SD.begin(5)) {  // CS pin 5
         Serial.println("SDStorageImpl: SD card initialization failed");
         return StorageError::INIT_FAILED;
     }

@@ -66,6 +66,13 @@ void setup() {
     // Create touch controller with standard CYD pins
     auto touch = make_unique<XPT2046Touch>(TOUCH_CS, TOUCH_IRQ);
     
+    // Pre-configure touch for CYD display
+    Serial.println("Pre-configuring touch controller...");
+    touch->setScreenSize(320, 240);
+    touch->setCalibration(200, 3900, 200, 3900);
+    touch->setDebouncing(true, 150);  // Reduced debounce for better responsiveness
+    touch->setRotation(1);  // Landscape rotation
+    
     // Create SD storage
     auto storage = make_unique<SDStorage>();
     

@@ -14,7 +14,7 @@ private:
     XPT2046_Touchscreen& touch_controller;
     bool initialized = false;
     unsigned long last_touch_time = 0;
-    uint8_t current_rotation = 3;
+    uint8_t current_rotation = 1;
     
     // Calibration constants for CYD boards
     static constexpr unsigned long DEBOUNCE_MS = 250;
